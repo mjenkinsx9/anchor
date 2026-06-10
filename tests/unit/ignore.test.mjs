@@ -31,4 +31,16 @@ describe('DEFAULT_IGNORE_DIRS', () => {
       expect(isIgnored(`${dir}/x`, DEFAULT_IGNORE_DIRS)).toBe(true);
     }
   });
+  it('matches deeply nested paths', () => {
+    expect(isIgnored('dist/sub/deep/file.js', ['**/dist/**'])).toBe(true);
+  });
+  it('does not match files whose name merely starts with a dir name', () => {
+    expect(isIgnored('node_modules.ts', DEFAULT_IGNORE_DIRS)).toBe(false);
+  });
+  it('normalizes ./-prefixed paths', () => {
+    expect(isIgnored('./vendor/x.js', ['vendor/**'])).toBe(true);
+  });
+  it('matches nested node_modules in monorepos', () => {
+    expect(isIgnored('packages/foo/node_modules/x.js', DEFAULT_IGNORE_DIRS)).toBe(true);
+  });
 });
