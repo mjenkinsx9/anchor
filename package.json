@@ -1,0 +1,23 @@
+{
+  "name": "anchor",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": { "anchor": "bin/anchor.mjs" },
+  "engines": { "node": ">=18" },
+  "scripts": {
+    "test": "vitest run tests/unit",
+    "test:watch": "vitest tests/unit",
+    "test:integration": "vitest run tests/integration",
+    "test:golden": "vitest run tests/golden",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "js-yaml": "^4.1.0",
+    "minimatch": "^10.0.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.0",
+    "vitest": "^3.0.0"
+  }
+}
