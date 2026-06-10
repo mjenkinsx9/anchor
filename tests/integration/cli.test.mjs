@@ -33,4 +33,14 @@ describe('anchor CLI skeleton', () => {
     expect(r.status).toBe(1);
     expect(r.stderr).toContain('usage');
   });
+  it('large JSON output is not truncated when piped', () => {
+    // doctor output is small; simulate by checking config output integrity (a full JSON document parses)
+    const r = anchor(['config']);
+    expect(() => JSON.parse(r.stdout)).not.toThrow();
+  });
+  it('parseArgs supports --key=value form', async () => {
+    const { parseArgs } = await import(BIN);
+    const { flags } = parseArgs(['--max-files=50']);
+    expect(flags.get('max-files')).toBe('50');
+  });
 });

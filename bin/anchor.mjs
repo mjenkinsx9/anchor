@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+import { realpathSync } from 'node:fs';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { runDoctor } from '../lib/doctor.mjs';
 import { loadConfig } from '../lib/config.mjs';
 
@@ -13,6 +15,11 @@ export function parseArgs(argv) {
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a.startsWith('--')) {
+      const eq = a.indexOf('=');
+      if (eq !== -1) {
+        flags.set(a.slice(2, eq), a.slice(eq + 1));
+        continue;
+      }
       const key = a.slice(2);
       if (VALUED.has(key) && i + 1 < argv.length && !argv[i + 1].startsWith('--')) {
         flags.set(key, argv[++i]);
@@ -45,32 +52,46 @@ function renderDoctorText({ checks }) {
 }
 
 const HANDLERS = {
-  doctor(rest, flags) {
+  doctor(positional, flags) {
     const result = runDoctor({ cwd: process.cwd() });
     emit(result, flags, renderDoctorText);
-    process.exit(result.ok ? 0 : 1);
+    process.exitCode = result.ok ? 0 : 1;
   },
-  config(rest, flags) {
+  config(positional, flags) {
     const { config, warnings } = loadConfig(process.cwd());
     for (const w of warnings) process.stderr.write(w + '\n');
-    if (rest[0] === 'validate') {
+    if (positional[0] === 'validate') {
       emit({ valid: warnings.length === 0, warnings }, flags);
-      process.exit(warnings.length === 0 ? 0 : 1);
+      process.exitCode = warnings.length === 0 ? 0 : 1;
+      return;
     }
     emit(config, flags);
   },
 };
 
-const [sub, ...rest] = process.argv.slice(2);
-const { positional, flags } = parseArgs(rest);
-const handler = HANDLERS[sub];
-if (!handler) {
-  process.stderr.write(USAGE + '\n');
-  process.exit(1);
+function main() {
+  const [sub, ...rest] = process.argv.slice(2);
+  const { positional, flags } = parseArgs(rest);
+  const handler = HANDLERS[sub];
+  if (!handler) {
+    process.stderr.write(USAGE + '\n');
+    process.exitCode = 1;
+    return;
+  }
+  try {
+    handler(positional, flags, rest);
+  } catch (e) {
+    process.stderr.write((e?.message ?? String(e)) + '\n');
+    process.exitCode = 1;
+  }
 }
-try {
-  handler(positional, flags);
-} catch (e) {
-  process.stderr.write((e?.message ?? String(e)) + '\n');
-  process.exit(1);
-}
+
+const isMain = (() => {
+  if (!process.argv[1]) return false;
+  try {
+    return realpathSync(process.argv[1]) === fileURLToPath(import.meta.url);
+  } catch {
+    return false;
+  }
+})();
+if (isMain) main();
