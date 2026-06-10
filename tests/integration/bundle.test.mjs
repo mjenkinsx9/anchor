@@ -13,10 +13,11 @@ describe('dist/anchor.mjs bundle', () => {
   it('is fresh — rebuilding with the pinned esbuild reproduces the committed file', () => {
     const tmp = mkdtempSync(join(tmpdir(), 'anchor-bundle-'));
     const out = join(tmp, 'anchor.mjs');
-    // Flags must match the "bundle" script in package.json — keep in sync.
-    const r = spawnSync('pnpm', ['exec', 'esbuild', join(ROOT, 'bin', 'anchor.mjs'),
-      '--bundle', '--platform=node', '--format=esm', `--outfile=${out}`],
-      { cwd: ROOT, encoding: 'utf8' });
+    // Re-run the real "bundle" script from package.json (outfile swapped to a
+    // temp path) so the test can never drift from what `make bundle` does.
+    const script = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')).scripts.bundle;
+    const args = script.split(/\s+/).map((a) => (a.startsWith('--outfile=') ? `--outfile=${out}` : a));
+    const r = spawnSync('pnpm', ['exec', ...args], { cwd: ROOT, encoding: 'utf8' });
     expect(r.status).toBe(0);
     const rebuilt = readFileSync(out, 'utf8');
     rmSync(tmp, { recursive: true, force: true });

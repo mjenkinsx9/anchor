@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { realpathSync, readFileSync } from 'node:fs';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 import { runDoctor } from '../lib/doctor.mjs';
 import { loadConfig, ensureGitignore } from '../lib/config.mjs';
 import { getDiff, withStats } from '../lib/diff.mjs';

@@ -2,7 +2,7 @@
 
 // bin/anchor.mjs
 import { realpathSync, readFileSync as readFileSync9 } from "node:fs";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 
 // lib/doctor.mjs
 import { existsSync as existsSync2 } from "node:fs";
