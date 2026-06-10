@@ -4693,17 +4693,36 @@ ${body}`;
 function reviewsDir(repoDir) {
   return join6(repoDir, ".anchor", "reviews");
 }
+function extractReviewMeta(content) {
+  const score = /Confidence:\s*(\d+(?:\.\d+)?)\s*\/\s*5/.exec(content);
+  const count = (emoji, word) => {
+    const m = new RegExp(`${emoji} ${word}\\s*\\((\\d+)\\)`).exec(content);
+    return m ? Number(m[1]) : null;
+  };
+  const found = {
+    critical: count("\u{1F534}", "CRITICAL"),
+    high: count("\u{1F7E0}", "HIGH"),
+    medium: count("\u{1F7E1}", "MEDIUM"),
+    low: count("\u{1F7E2}", "LOW")
+  };
+  const anyHeader = Object.values(found).some((v) => v !== null);
+  return {
+    score: score ? Number(score[1]) : null,
+    severities: anyHeader ? { critical: found.critical ?? 0, high: found.high ?? 0, medium: found.medium ?? 0, low: found.low ?? 0 } : null
+  };
+}
 function saveReview(repoDir, content, meta = {}) {
   const date = meta.date ?? (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
   const sha = meta.sha ?? shortHead(repoDir) ?? "nosha";
   const path2 = meta.path ?? join6(reviewsDir(repoDir), `${date}-${sha}.md`);
   mkdirSync2(dirname3(path2), { recursive: true });
+  const extracted = extractReviewMeta(content);
   const fm = {
     date,
     sha,
     target: meta.target ?? "",
-    score: meta.score ?? null,
-    severities: meta.severities ?? { critical: 0, high: 0, medium: 0, low: 0 }
+    score: meta.score ?? extracted.score,
+    severities: meta.severities ?? extracted.severities ?? { critical: 0, high: 0, medium: 0, low: 0 }
   };
   writeFileSync2(path2, stringifyFrontmatter(fm, content));
   return { path: path2 };

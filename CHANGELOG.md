@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.2.2 — 2026-06-10
+
+- `anchor review save` now extracts `score` and severity counts from the
+  rendered review body (`Confidence: <n> / 5`, `🔴 CRITICAL (n)` headers)
+  when not passed explicitly — archives previously recorded `score: null`
+  and all-zero severities, so `anchor status` showed `score: ?/5` and
+  "0 open findings" regardless of the actual review
+
 ## v0.2.1 — 2026-06-10
 
 Two install-breaking fixes found while field-testing v0.2.0.
