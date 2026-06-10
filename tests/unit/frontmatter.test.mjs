@@ -18,6 +18,16 @@ describe('parseFrontmatter', () => {
     expect(data).toEqual({});
     expect(body).toBe(text);
   });
+  it('handles CRLF line endings', () => {
+    const { data } = parseFrontmatter('---\r\nkey: value\r\n---\r\n\r\nbody');
+    expect(data.key).toBe('value');
+  });
+  it('round-trips the review archiver shape', () => {
+    const meta = { date: '2026-06-09', sha: 'abc1234', target: 'main..feature', score: 4, severities: { critical: 0, high: 1, medium: 0, low: 2 } };
+    const { data } = parseFrontmatter(stringifyFrontmatter(meta, '# r\n'));
+    expect(data).toEqual(meta);
+    expect(typeof data.date).toBe('string');
+  });
 });
 
 describe('stringifyFrontmatter', () => {
