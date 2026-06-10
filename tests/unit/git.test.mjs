@@ -2,6 +2,7 @@ import { describe, it, expect, afterAll } from 'vitest';
 import { runCmd, runGit, isGitRepo, repoRoot, shortHead, hasCmd } from '../../lib/git.mjs';
 import { makeFixtureRepo } from '../helpers/fixture.mjs';
 import { tmpdir } from 'node:os';
+import { realpathSync } from 'node:fs';
 
 const repo = makeFixtureRepo({ 'a.txt': 'hello\n' });
 afterAll(() => repo.cleanup());
@@ -29,12 +30,12 @@ describe('git helpers', () => {
   });
   it('repoRoot resolves the fixture root', () => {
     // realpath both sides: macOS/Linux tmpdirs may be symlinked
-    expect(repoRoot(repo.dir)).toBeTruthy();
+    expect(realpathSync(repoRoot(repo.dir))).toBe(realpathSync(repo.dir));
   });
   it('shortHead returns a short sha', () => {
     expect(shortHead(repo.dir)).toMatch(/^[0-9a-f]{6,12}$/);
   });
-  it('hasCmd', () => {
+  it('returns true for installed commands, false for missing ones', () => {
     expect(hasCmd('git')).toBe(true);
     expect(hasCmd('definitely-not-a-real-binary-xyz')).toBe(false);
   });
