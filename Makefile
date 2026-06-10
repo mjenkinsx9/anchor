@@ -1,4 +1,4 @@
-ANCHOR_DIR := $(shell makefile_path="$(MAKEFILE_LIST)"; cd "$${makefile_path%/*}" && pwd -P)
+ANCHOR_DIR := $(shell cd "$$(dirname "$(MAKEFILE_LIST)")" && pwd -P)
 
 install:
 	pnpm install
