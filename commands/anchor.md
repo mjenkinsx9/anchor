@@ -24,6 +24,9 @@ Subcommand behavior:
 - `context [target]`  → run `anchor context --from-diff <target>`, show the result
 - `review [target]`   → read ~/.claude/skills/anchor/SKILL.md and follow
                         the full review workflow, present the review in chat
+- `review --explain <sha>` / `full --explain <sha>`
+                      → run `anchor review show <sha>` and re-display the
+                        archived review (no new review is performed)
 - `full [target]`     → first run `anchor doctor`; bail if any check fails.
                         Then run the full review workflow. Then auto-archive
                         the review to .anchor/reviews/<date>-<sha>.md. Show

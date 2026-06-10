@@ -20,6 +20,7 @@ gathering and YOU (the active LLM session) for the review reasoning. The
 |---|---|
 | `init` | Follow the **Init workflow** below |
 | `review [target]` | Follow the **Review workflow** below |
+| `review --explain <sha>` / `full --explain <sha>` | Run `anchor review show <sha>` and re-display the archived review — do not start a new review |
 | `full [target]` | Run `anchor doctor` first (bail if exit 1), then the Review workflow, then auto-archive (no need for the user to ask) |
 | `diff` / `context` / `learn` / `status` / `doctor` | Run the matching `anchor` command via Bash and show the result (use `--format text` for doctor/status when presenting to the user) |
 | (no args) | Default to `review` of uncommitted changes |
