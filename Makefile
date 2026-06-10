@@ -4,7 +4,8 @@ install:
 	pnpm install
 	@$(MAKE) -s link
 	@[ ! -f "$(ANCHOR_DIR)/hooks/pre-push" ] || chmod +x "$(ANCHOR_DIR)/hooks/pre-push"
-	@node "$(ANCHOR_DIR)/bin/install-posttool-hook.mjs" 2>/dev/null || true
+	@[ ! -f "$(ANCHOR_DIR)/hooks/post-push-reminder.sh" ] || chmod +x "$(ANCHOR_DIR)/hooks/post-push-reminder.sh"
+	@[ ! -f "$(ANCHOR_DIR)/bin/install-posttool-hook.mjs" ] || node "$(ANCHOR_DIR)/bin/install-posttool-hook.mjs"
 	@echo ""
 	@echo "Anchor installed. To initialize a codebase map for a repo:"
 	@echo "  cd <your-repo> && claude   # then run /anchor init"
