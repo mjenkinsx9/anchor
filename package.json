@@ -14,7 +14,8 @@
     "test:watch": "vitest tests/unit",
     "test:integration": "vitest run --passWithNoTests tests/integration",
     "test:golden": "vitest run --passWithNoTests tests/golden",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "bundle": "esbuild bin/anchor.mjs --bundle --platform=node --format=esm --outfile=dist/anchor.mjs"
   },
   "dependencies": {
     "js-yaml": "^4.1.0",
@@ -22,6 +23,7 @@
   },
   "devDependencies": {
     "@types/node": "^24.13.1",
+    "esbuild": "^0.28.0",
     "typescript": "^5.6.0",
     "vitest": "^3.0.0"
   }
