@@ -8,14 +8,15 @@
 - [ ] 3. Reply "mark finding 1 as noise", verify learnings.md grows
 - [ ] 4. Reply "save review", verify .anchor/reviews/<date>-<sha>.md exists
 - [ ] 5. Run `/anchor full`, verify the same flow + auto-archive
-- [ ] 6. Run `/anchor doctor`, verify all green
+- [ ] 6. Run `/anchor doctor`, verify all checks pass (a "plugin install" warn
+   is expected only in a dev checkout)
 - [ ] 7. Run `/anchor init --refresh`, verify the map and graph are regenerated
 - [ ] 8. Run `/anchor status`, verify the text summary + JSON output are coherent
-- [ ] 9. Run `make install-hook` from the fixture repo, then `git push` to a fake
+- [ ] 9. Run `/anchor hook install` from the fixture repo, then `git push` to a fake
    remote (or `--dry-run`, which also fires pre-push), verify the reminder
    prints and the push is NOT blocked
 - [ ] 10. Verify the PostToolUse hook fires inside Claude Code after `git push`
-- [ ] 11. Run `make uninstall-hook`, verify .git/hooks/pre-push is removed
+- [ ] 11. Run `/anchor hook uninstall`, verify .git/hooks/pre-push is removed
 - [ ] 12. Run `/anchor review pr <N>` against a fixture PR with a body and a linked
     closing issue; verify the review explicitly references both
 - [ ] 13. Run `/anchor review pr <N> --no-pr-context` and verify PR metadata is NOT

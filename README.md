@@ -1,17 +1,19 @@
 # Anchor
 
-Personal code review for Claude Code. A `/anchor` slash command + skill backed
-by small deterministic scripts. The LLM is your active Claude Code session —
-no API keys, no servers, no per-call cost.
+Personal code review for Claude Code, packaged as a plugin. A `/anchor` slash
+command + skill backed by small deterministic scripts. The LLM is your active
+Claude Code session — no API keys, no servers, no per-call cost.
 
 ## Install
 
-```bash
-git clone <this-repo> && cd anchor
-make install        # pnpm install + symlinks + Claude Code push reminder
+Inside Claude Code, on any machine:
+
+```
+/plugin marketplace add mjenkinsx9/claude-plugins
+/plugin install anchor@claude-plugins
 ```
 
-Then in any repo, inside Claude Code:
+Then in any repo:
 
 ```
 /anchor init        # build the codebase map + dependency graph (once)
@@ -23,23 +25,36 @@ Then in any repo, inside Claude Code:
 Targets: `(none)` uncommitted · `--staged` · `main..feature` · `pr 123` ·
 `pr <url>` · `@path/to/file`.
 
-Optional per-repo push reminder: `cd <repo> && make -f <anchor>/Makefile install-hook`.
+Optional per-repo git push reminder: `/anchor hook install` (remove with
+`/anchor hook uninstall`). The Claude Code push reminder hook is registered
+automatically by the plugin. `ANCHOR_NO_REMIND=1` silences both.
+
+Update: bump happens in this repo; machines pick it up with `/plugin update anchor`.
 
 ## Layout
 
-- `skill/SKILL.md` — the review + init workflows Claude follows
+- `.claude-plugin/plugin.json` — plugin manifest
+- `skills/anchor/SKILL.md` — the review + init workflows Claude follows
 - `commands/anchor.md` — the `/anchor` slash command
-- `bin/anchor.mjs`, `lib/` — deterministic scripts (diff, context, learn, status, doctor)
+- `hooks/hooks.json`, `hooks/post-push-reminder.sh` — PostToolUse push reminder
+- `bin/anchor.mjs`, `lib/` — deterministic scripts (source)
+- `dist/anchor.mjs` — committed single-file bundle the skill invokes
 - `.anchor/` (in *your* repo, gitignored) — config, learnings, codebase map, archived reviews
 
 ## Develop
 
 ```bash
+pnpm install
 pnpm test                 # unit
 pnpm test:integration
 pnpm test:golden          # snapshot of review inputs
 pnpm typecheck
+make bundle               # regenerate dist/anchor.mjs (required before release)
 ```
 
-Manual checklist: `tests/manual/SMOKE.md`. Design spec:
-`docs/superpowers/specs/2026-06-09-anchor-design.md`.
+Release: bump `.claude-plugin/plugin.json` + `package.json` versions →
+`make bundle` → suites green → update CHANGELOG → commit → `git tag vX.Y.Z` →
+push with tags.
+
+Manual checklist: `tests/manual/SMOKE.md`. Design specs:
+`docs/superpowers/specs/`.
