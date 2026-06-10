@@ -30,6 +30,9 @@ describe('resolveImport', () => {
   it('never resolves outside the repo root', () => {
     expect(resolveImport(repo.dir, 'src/consumer.ts', '../../../etc/passwd')).toBeNull();
   });
+  it('never resolves to a directory', () => {
+    expect(resolveImport(repo.dir, 'src/consumer.ts', '.')).toBeNull();
+  });
 });
 
 describe('getContext', () => {

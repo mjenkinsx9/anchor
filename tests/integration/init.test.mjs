@@ -62,4 +62,13 @@ describe('gatherInitData', () => {
     const d = gatherInitData(repo.dir, { noPrs: true });
     expect(d.structure.topLevelDirs).not.toContain('docs');
   });
+  it('normalizes rename paths in hot files', () => {
+    repo.git('mv', 'src/util.ts', 'src/helper.ts');
+    commitAll(repo.dir, 'refactor: rename util to helper');
+    const d = gatherInitData(repo.dir, { noPrs: true });
+    const paths = d.dependencyGraph.hotFiles.map((f) => f.path);
+    expect(paths.some((p) => p.includes('=>') || p.includes('{'))).toBe(false);
+    repo.git('mv', 'src/helper.ts', 'src/util.ts');
+    commitAll(repo.dir, 'refactor: rename back');
+  });
 });
