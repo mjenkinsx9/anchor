@@ -11,8 +11,9 @@ import { gatherInitData } from '../lib/init.mjs';
 import { getStatus, renderStatusText } from '../lib/status.mjs';
 import { isIgnored } from '../lib/ignore.mjs';
 import { isGitRepo } from '../lib/git.mjs';
+import { installHook, uninstallHook } from '../lib/hook.mjs';
 
-const USAGE = `usage: anchor <init|diff|context|review|learn|status|config|doctor> [args] [--format json|text]`;
+const USAGE = `usage: anchor <init|diff|context|review|learn|status|config|doctor|hook> [args] [--format json|text]`;
 
 /** Flags that take a value. Everything else with -- is boolean. */
 const VALUED = new Set(['format', 'reason', 'max-files', 'from-diff', 'depth', 'target']);
@@ -170,6 +171,13 @@ const HANDLERS = {
     });
     for (const w of data.warnings) process.stderr.write(w + '\n');
     emit(data, flags);
+  },
+
+  hook(positional, flags) {
+    const [action] = positional;
+    if (action === 'install') return emit(installHook(process.cwd(), { force: flags.has('force') }), flags);
+    if (action === 'uninstall') return emit(uninstallHook(process.cwd()), flags);
+    throw new Error('anchor: hook needs install|uninstall');
   },
 };
 
