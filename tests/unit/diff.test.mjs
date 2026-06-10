@@ -74,4 +74,74 @@ describe('parseUnifiedDiff', () => {
   it('empty input → empty array', () => {
     expect(parseUnifiedDiff('')).toEqual([]);
   });
+  it('emits a record for binary files', () => {
+    const diff = [
+      'diff --git a/logo.png b/logo.png',
+      'index 111..222 100644',
+      'Binary files a/logo.png and b/logo.png differ',
+      '',
+    ].join('\n');
+    const files = parseUnifiedDiff(diff);
+    expect(files).toHaveLength(1);
+    expect(files[0]).toMatchObject({ path: 'logo.png', binary: true, hunks: [] });
+  });
+  it('emits a record for pure renames', () => {
+    const diff = [
+      'diff --git a/old.ts b/new.ts',
+      'similarity index 100%',
+      'rename from old.ts',
+      'rename to new.ts',
+      '',
+    ].join('\n');
+    const files = parseUnifiedDiff(diff);
+    expect(files).toHaveLength(1);
+    expect(files[0]).toMatchObject({ path: 'new.ts', renamedFrom: 'old.ts', hunks: [] });
+  });
+  it('emits a record for mode-change-only entries', () => {
+    const diff = [
+      'diff --git a/run.sh b/run.sh',
+      'old mode 100644',
+      'new mode 100755',
+      '',
+    ].join('\n');
+    const files = parseUnifiedDiff(diff);
+    expect(files).toHaveLength(1);
+    expect(files[0]).toMatchObject({ path: 'run.sh', modeChange: true });
+  });
+  it('does not mistake body lines starting with --- or +++ for headers', () => {
+    const diff = [
+      'diff --git a/doc.md b/doc.md',
+      '--- a/doc.md',
+      '+++ b/doc.md',
+      '@@ -1,3 +1,3 @@',
+      ' context',
+      '---removed dashes line',
+      '+++added plus line',
+      ' end',
+      '',
+    ].join('\n');
+    const files = parseUnifiedDiff(diff);
+    expect(files).toHaveLength(1);
+    expect(files[0].added).toBe(1);
+    expect(files[0].removed).toBe(1);
+    expect(files[0].hunks[0].body).toContain('---removed dashes line');
+  });
+  it('rename with content change attributes hunks to the new path', () => {
+    const diff = [
+      'diff --git a/old.ts b/new.ts',
+      'similarity index 90%',
+      'rename from old.ts',
+      'rename to new.ts',
+      '--- a/old.ts',
+      '+++ b/new.ts',
+      '@@ -1 +1 @@',
+      '-a',
+      '+b',
+      '',
+    ].join('\n');
+    const files = parseUnifiedDiff(diff);
+    expect(files).toHaveLength(1);
+    expect(files[0].path).toBe('new.ts');
+    expect(files[0].renamedFrom).toBe('old.ts');
+  });
 });
