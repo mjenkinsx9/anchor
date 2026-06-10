@@ -10,7 +10,7 @@ describe('runDoctor', () => {
   it('returns a check for each diagnostic', () => {
     const { checks } = runDoctor({ cwd: repo.dir });
     const names = checks.map((c) => c.name);
-    for (const expected of ['git', 'gh', 'repo', 'skill symlink', 'command symlink', 'bin symlink', 'config', 'claude code', 'node']) {
+    for (const expected of ['git', 'gh', 'repo', 'bundle', 'plugin install', 'config', 'claude code', 'node']) {
       expect(names).toContain(expected);
     }
   });

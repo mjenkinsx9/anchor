@@ -2,12 +2,12 @@
 
 // bin/anchor.mjs
 import { realpathSync, readFileSync as readFileSync9 } from "node:fs";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath as fileURLToPath2 } from "node:url";
 
 // lib/doctor.mjs
 import { existsSync as existsSync2 } from "node:fs";
 import { join as join2 } from "node:path";
-import { homedir } from "node:os";
+import { fileURLToPath } from "node:url";
 
 // lib/git.mjs
 import { spawnSync } from "node:child_process";
@@ -2503,26 +2503,20 @@ function runDoctor({ cwd = process.cwd() } = {}) {
   add("repo", inRepo, inRepo ? "inside a git repository" : "not a git repository", {
     fix: "Run from inside a repo"
   });
-  const symlinks = [
-    ["skill symlink", join2(homedir(), ".claude", "skills", "anchor", "SKILL.md")],
-    ["command symlink", join2(homedir(), ".claude", "commands", "anchor.md")]
-  ];
-  for (const [name, p] of symlinks) {
-    const ok2 = existsSync2(p);
-    add(name, ok2, ok2 ? `${p} resolves` : `${p} missing or broken`, {
-      fix: "Run `make link` in the anchor repo"
-    });
-  }
-  const binPath = join2(homedir(), "bin", "anchor");
-  const binResolves = existsSync2(binPath);
-  const binDir = join2(homedir(), "bin");
-  const onPath = (process.env.PATH ?? "").split(":").includes(binDir);
-  const binOk = binResolves && onPath;
+  const pkgRoot = fileURLToPath(new URL("..", import.meta.url));
+  const underPluginCache = pkgRoot.includes(join2(".claude", "plugins", "cache"));
+  const bundlePath = join2(pkgRoot, "dist", "anchor.mjs");
+  const bundleOk = existsSync2(bundlePath);
+  add("bundle", bundleOk, bundleOk ? `${bundlePath} present` : `${bundlePath} missing`, {
+    level: underPluginCache ? "error" : "warn",
+    // missing bundle in a plugin install = broken release
+    fix: "Run /plugin update anchor (or `make bundle` in a dev checkout)"
+  });
   add(
-    "bin symlink",
-    binOk,
-    binOk ? `${binPath} resolves and ~/bin is on $PATH` : !binResolves ? `${binPath} missing or broken` : `${binPath} resolves but ~/bin is not on $PATH`,
-    { fix: "Run `make link` in the anchor repo and add ~/bin to $PATH" }
+    "plugin install",
+    underPluginCache,
+    underPluginCache ? `running from plugin cache (${pkgRoot})` : `running from source checkout (dev mode): ${pkgRoot}`,
+    { level: "warn", fix: "Install via /plugin install anchor@claude-plugins for normal use" }
   );
   const { warnings } = loadConfig(cwd);
   add("config", warnings.length === 0, warnings.length === 0 ? ".anchor/config.yaml ok (or absent)" : warnings.join("; "), {
@@ -5243,7 +5237,7 @@ function main() {
 var isMain = (() => {
   if (!process.argv[1]) return false;
   try {
-    return realpathSync(process.argv[1]) === fileURLToPath(import.meta.url);
+    return realpathSync(process.argv[1]) === fileURLToPath2(import.meta.url);
   } catch {
     return false;
   }
