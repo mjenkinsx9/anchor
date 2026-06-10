@@ -27,6 +27,9 @@ describe('resolveImport', () => {
   it('returns null for unresolvable specifiers', () => {
     expect(resolveImport(repo.dir, 'src/consumer.ts', './missing')).toBeNull();
   });
+  it('never resolves outside the repo root', () => {
+    expect(resolveImport(repo.dir, 'src/consumer.ts', '../../../etc/passwd')).toBeNull();
+  });
 });
 
 describe('getContext', () => {
