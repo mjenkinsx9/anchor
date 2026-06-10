@@ -10,7 +10,7 @@ install:
 	@echo "  cd <your-repo> && claude   # then run /anchor init"
 	@echo ""
 	@echo "To install the pre-push reminder hook in a specific repo:"
-	@echo "  cd <your-repo> && make -f $(ANCHOR_DIR)/Makefile install-hook"
+	@echo "  cd <your-repo> && claude   # then run /anchor hook install"
 	@echo ""
 
 link:
