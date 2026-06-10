@@ -4,8 +4,8 @@
 
 Formal Claude Code plugin.
 
-- Installable via a personal marketplace: `/plugin marketplace add mjenkinsx9/mjenkins-plugins`,
-  `/plugin install anchor@mjenkins-plugins`
+- Installable via a personal marketplace: `/plugin marketplace add mjenkinsx9/mjenkins-toolbox`,
+  `/plugin install anchor@mjenkins-toolbox`
 - Single-file bundled CLI (`dist/anchor.mjs`, esbuild) — no PATH symlink, no node_modules
 - PostToolUse push reminder registered declaratively via `hooks/hooks.json`
   (settings.json installer removed)
