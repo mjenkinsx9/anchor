@@ -39,6 +39,11 @@ describe('getStatus', () => {
     expect(s.git.clean).toBe(false);
     expect(s.nextSuggestion).toContain('/anchor review');
   });
+  it('reports no upstream rather than a misleading zero', () => {
+    const s = getStatus(repo.dir);
+    expect(s.git.hasUpstream).toBe(false);
+    expect(renderStatusText(s)).toContain('no upstream');
+  });
 });
 
 describe('renderStatusText', () => {
