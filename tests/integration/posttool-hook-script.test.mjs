@@ -38,4 +38,9 @@ describe('hooks/post-push-reminder.sh', () => {
     const r = spawnSync('bash', [SCRIPT], { encoding: 'utf8', input: 'not json{{' });
     expect(r.status).toBe(0);
   });
+  it('stays silent for git pushup (not a git push)', () => {
+    const r = runHook({ command: 'git pushup --force' });
+    expect(r.status).toBe(0);
+    expect(r.stdout.trim()).toBe('');
+  });
 });

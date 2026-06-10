@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
+import { readFileSync, writeFileSync, renameSync, existsSync, mkdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
@@ -25,5 +25,12 @@ if (!changed) {
   process.exit(0);
 }
 mkdirSync(dirname(settingsPath), { recursive: true });
-writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + '\n');
+const tmpPath = settingsPath + '.tmp';
+try {
+  writeFileSync(tmpPath, JSON.stringify(settings, null, 2) + '\n');
+  renameSync(tmpPath, settingsPath);
+} catch (err) {
+  console.error(`anchor: could not write ${settingsPath}: ${err.message}`);
+  process.exit(0);
+}
 console.log(`anchor: PostToolUse hook installed (${hookScript}).`);
