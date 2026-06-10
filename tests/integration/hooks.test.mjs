@@ -1,6 +1,6 @@
 import { describe, it, expect, afterAll } from 'vitest';
 import { spawnSync } from 'node:child_process';
-import { chmodSync, copyFileSync, existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { chmodSync, copyFileSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { join, dirname } from 'node:path';
@@ -68,5 +68,25 @@ describe('make install-hook / uninstall-hook', () => {
     const r = make('install-hook', '/tmp');
     expect(r.status).not.toBe(0);
     expect(r.stdout + r.stderr).toContain('must be run from inside a git repo');
+  });
+  it('uninstall-hook refuses to delete a non-anchor pre-push hook', () => {
+    const hookPath = join(repo.dir, '.git', 'hooks', 'pre-push');
+    const customContent = '#!/bin/sh\necho mine\n';
+    writeFileSync(hookPath, customContent, { mode: 0o755 });
+    try {
+      const r = make('uninstall-hook', repo.dir);
+      expect(r.status).not.toBe(0);
+      expect(existsSync(hookPath)).toBe(true);
+      expect(readFileSync(hookPath, 'utf8')).toBe(customContent);
+    } finally {
+      rmSync(hookPath, { force: true });
+    }
+  });
+  it('uninstall-hook reports cleanly when no hook installed', () => {
+    const hookPath = join(repo.dir, '.git', 'hooks', 'pre-push');
+    rmSync(hookPath, { force: true }); // ensure absent
+    const r = make('uninstall-hook', repo.dir);
+    expect(r.status).toBe(0);
+    expect(r.stdout + r.stderr).toContain('no pre-push hook installed');
   });
 });
