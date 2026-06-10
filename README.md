@@ -10,6 +10,7 @@
 ![Node](https://img.shields.io/badge/node-%E2%89%A518-339933?logo=node.js&logoColor=white)
 ![pnpm](https://img.shields.io/badge/pnpm-workspace-F69220?logo=pnpm&logoColor=white)
 ![Made for Claude Code](https://img.shields.io/badge/made_for-Claude_Code-d97757)
+[![License: MIT](https://img.shields.io/badge/license-MIT-yellow.svg)](LICENSE)
 
 </div>
 
@@ -100,3 +101,7 @@ Design specs: [`docs/superpowers/specs/`](docs/superpowers/specs/)
 3. All suites green
 4. Update [CHANGELOG.md](CHANGELOG.md)
 5. Commit → `git tag vX.Y.Z` → push with tags
+
+## 📄 License
+
+[MIT](LICENSE) © 2026 Mike Jenkins
