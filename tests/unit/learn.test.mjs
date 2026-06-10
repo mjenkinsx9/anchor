@@ -61,4 +61,23 @@ describe('removeLearning', () => {
     addLearning(dir, 'Pattern A');
     expect(removeLearning(dir, 'zzz').removed).toBe(0);
   });
+  it('removeLearning on a repo with no learnings file', () => {
+    expect(removeLearning(dir, 'anything').removed).toBe(0);
+    expect(existsSync(FILE())).toBe(false);
+  });
+});
+
+describe('sanitization', () => {
+  it('sanitizes --> and newlines in reasons (would corrupt the file format)', () => {
+    addLearning(dir, 'Arrow pattern', 'old --> new\nmigration');
+    const { patterns } = listLearnings(dir);
+    expect(patterns[0].reason).toBe('old → new migration');
+    // survives a rewrite cycle
+    addLearning(dir, 'Other');
+    expect(listLearnings(dir).patterns[0].reason).toBe('old → new migration');
+  });
+  it('sanitizes newlines in headings', () => {
+    addLearning(dir, 'Multi\nline heading');
+    expect(listLearnings(dir).patterns[0].heading).toBe('Multi line heading');
+  });
 });
