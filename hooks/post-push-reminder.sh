@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Claude Code PostToolUse hook: after the Bash tool runs a `git push`,
 # inject context asking Claude to offer an Anchor review. Opt out with
-# ANCHOR_NO_REMIND=1 or by removing the entry from ~/.claude/settings.json.
+# ANCHOR_NO_REMIND=1 or by disabling/uninstalling the anchor plugin.
 [ -n "$ANCHOR_NO_REMIND" ] && exit 0
 
 input="$(cat)"
