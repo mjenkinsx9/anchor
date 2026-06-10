@@ -1,0 +1,37 @@
+{
+  "diff": {
+    "mode": "uncommitted",
+    "files": [
+      {
+        "path": "src/auth.ts",
+        "added": 1,
+        "removed": 1,
+        "hunks": [
+          {
+            "oldStart": 1,
+            "oldLines": 3,
+            "newStart": 1,
+            "newLines": 3,
+            "body": " export function check(input, stored) {\n-  return false;\n+  return input.hash == stored.hash;\n }\n"
+          }
+        ]
+      }
+    ],
+    "stats": {
+      "totalAdded": 1,
+      "totalRemoved": 1,
+      "fileCount": 1
+    }
+  },
+  "context": {
+    "files": [
+      {
+        "path": "src/app.ts",
+        "reason": "importer"
+      }
+    ]
+  },
+  "learnings": {
+    "patterns": []
+  }
+}

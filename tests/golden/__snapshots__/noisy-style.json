@@ -1,0 +1,51 @@
+{
+  "diff": {
+    "mode": "uncommitted",
+    "files": [
+      {
+        "path": ".anchor/learnings.md",
+        "added": 14,
+        "removed": 0,
+        "hunks": [
+          {
+            "oldStart": 0,
+            "oldLines": 0,
+            "newStart": 1,
+            "newLines": 14,
+            "body": "+# Anchor Learnings\n+\n+<!--\n+This file is auto-managed by Anchor. Each entry is a \"noise pattern\" the\n+user has marked as not worth surfacing in future reviews.\n+\n+Hand-edits are supported ONLY in this exact shape — one \"### Heading\" line,\n+optionally followed by one reason comment line (the format addLearning writes).\n+Anything else (body paragraphs, extra markdown) is discarded on the next rewrite.\n+Manage entries with `anchor learn add|remove` to be safe.\n+-->\n+\n+### Missing docstrings on private methods\n+<!-- reason: project style -->\n"
+          }
+        ]
+      },
+      {
+        "path": "src/helper.ts",
+        "added": 2,
+        "removed": 1,
+        "hunks": [
+          {
+            "oldStart": 1,
+            "oldLines": 1,
+            "newStart": 1,
+            "newLines": 2,
+            "body": "-export const h = 1;\n+function _internal() { return 1; }\n+export const h = _internal;\n"
+          }
+        ]
+      }
+    ],
+    "stats": {
+      "totalAdded": 16,
+      "totalRemoved": 1,
+      "fileCount": 2
+    }
+  },
+  "context": {
+    "files": []
+  },
+  "learnings": {
+    "patterns": [
+      {
+        "heading": "Missing docstrings on private methods",
+        "reason": "project style"
+      }
+    ]
+  }
+}

@@ -1,0 +1,37 @@
+{
+  "diff": {
+    "mode": "uncommitted",
+    "files": [
+      {
+        "path": "src/sum.ts",
+        "added": 1,
+        "removed": 3,
+        "hunks": [
+          {
+            "oldStart": 1,
+            "oldLines": 3,
+            "newStart": 1,
+            "newLines": 1,
+            "body": "-export function sum(a: number, b: number) {\n-  return a + b;\n-}\n+export const sum = (a: number, b: number) => a + b;\n"
+          }
+        ]
+      }
+    ],
+    "stats": {
+      "totalAdded": 1,
+      "totalRemoved": 3,
+      "fileCount": 1
+    }
+  },
+  "context": {
+    "files": [
+      {
+        "path": "src/app.ts",
+        "reason": "importer"
+      }
+    ]
+  },
+  "learnings": {
+    "patterns": []
+  }
+}
