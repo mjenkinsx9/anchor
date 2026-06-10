@@ -1,6 +1,6 @@
 import { describe, it, expect, afterAll } from 'vitest';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { join, dirname } from 'node:path';
@@ -92,5 +92,24 @@ describe('anchor hook install/uninstall', () => {
     const r = anchor(['hook', 'uninstall']);
     expect(r.status).toBe(0);
     expect(JSON.parse(r.stdout).message).toContain('no pre-push hook installed');
+  });
+
+  it('--force overwrite of a non-executable file leaves an executable hook', () => {
+    writeFileSync(hookPath(), '#!/bin/sh\necho stale\n', { mode: 0o644 });
+    try {
+      const r = anchor(['hook', 'install', '--force']);
+      expect(r.status).toBe(0);
+      expect(statSync(hookPath()).mode & 0o111).not.toBe(0);
+    } finally {
+      rmSync(hookPath(), { force: true });
+    }
+  });
+
+  it('uninstall recognizes any hook carrying the anchor marker (v0.1.0 compat)', () => {
+    writeFileSync(hookPath(), '#!/usr/bin/env bash\n# Anchor pre-push reminder. Git invokes this when `git push` runs.\nexit 0\n', { mode: 0o755 });
+    const r = anchor(['hook', 'uninstall']);
+    expect(r.status).toBe(0);
+    expect(JSON.parse(r.stdout).removed).toBe(true);
+    expect(existsSync(hookPath())).toBe(false);
   });
 });
