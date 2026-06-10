@@ -27,6 +27,10 @@ describe('parseTarget', () => {
   it('unrecognized → throws', () => {
     expect(() => parseTarget(['wat'])).toThrow(/unrecognized target/);
   });
+  it('accepts explicit uncommitted/staged words (round-trips the diff JSON mode)', () => {
+    expect(parseTarget(['uncommitted'])).toEqual({ mode: 'uncommitted' });
+    expect(parseTarget(['staged'])).toEqual({ mode: 'staged' });
+  });
 });
 
 describe('parseUnifiedDiff', () => {

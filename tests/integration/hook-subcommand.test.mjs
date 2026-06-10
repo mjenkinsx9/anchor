@@ -112,4 +112,19 @@ describe('anchor hook install/uninstall', () => {
     expect(JSON.parse(r.stdout).removed).toBe(true);
     expect(existsSync(hookPath())).toBe(false);
   });
+
+  it('bare `hook` reports install status instead of erroring', () => {
+    const fresh = makeFixtureRepo({ 'b.txt': 'y\n' });
+    try {
+      const r0 = anchor(['hook'], fresh.dir);
+      expect(r0.status).toBe(0);
+      expect(JSON.parse(r0.stdout).installed).toBe(false);
+      expect(anchor(['hook', 'install'], fresh.dir).status).toBe(0);
+      const r1 = anchor(['hook'], fresh.dir);
+      expect(r1.status).toBe(0);
+      expect(JSON.parse(r1.stdout).installed).toBe(true);
+    } finally {
+      fresh.cleanup();
+    }
+  });
 });

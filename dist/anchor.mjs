@@ -1,6 +1,4 @@
-#!/usr/bin/env node
-
-// bin/anchor.mjs
+// lib/cli.mjs
 import { realpathSync, readFileSync as readFileSync9 } from "node:fs";
 import { fileURLToPath as fileURLToPath2 } from "node:url";
 
@@ -2540,6 +2538,8 @@ import { join as join3 } from "node:path";
 function parseTarget(tokens = []) {
   const t = tokens.filter((x) => !x.startsWith("--"));
   if (t.length === 0) return { mode: "uncommitted" };
+  if (t[0] === "uncommitted") return { mode: "uncommitted" };
+  if (t[0] === "staged") return { mode: "staged" };
   if (t[0] === "pr") {
     const selector = t[1] ?? "";
     if (!selector) throw new Error("anchor: pr mode needs a number or URL, e.g. `anchor diff pr 123`");
@@ -5049,6 +5049,12 @@ function installHook(repoDir, { force = false } = {}) {
   chmodSync(hookPath, 493);
   return { installed: true, path: hookPath };
 }
+function hookStatus(repoDir) {
+  const hookPath = join9(repoDir, ".git", "hooks", "pre-push");
+  if (!existsSync9(hookPath)) return { installed: false, path: hookPath };
+  const isAnchor = readFileSync8(hookPath, "utf8").includes(MARKER);
+  return isAnchor ? { installed: true, path: hookPath } : { installed: false, path: hookPath, foreign: true };
+}
 function uninstallHook(repoDir) {
   const hookPath = join9(repoDir, ".git", "hooks", "pre-push");
   if (!existsSync9(hookPath)) {
@@ -5061,7 +5067,7 @@ function uninstallHook(repoDir) {
   return { removed: true, path: hookPath };
 }
 
-// bin/anchor.mjs
+// lib/cli.mjs
 var USAGE = `usage: anchor <init|diff|context|review|learn|status|config|doctor|hook> [args] [--format json|text]`;
 var VALUED = /* @__PURE__ */ new Set(["format", "reason", "max-files", "from-diff", "depth", "target"]);
 function parseArgs(argv) {
@@ -5163,7 +5169,7 @@ var HANDLERS = {
   learn(positional, flags) {
     requireRepo();
     const [action, ...args] = positional;
-    if (action === "list") return emit(listLearnings(process.cwd()), flags);
+    if (action === void 0 || action === "list") return emit(listLearnings(process.cwd()), flags);
     if (action === "add") {
       ensureGitignore(process.cwd());
       const r = addLearning(
@@ -5213,6 +5219,7 @@ var HANDLERS = {
   },
   hook(positional, flags) {
     const [action] = positional;
+    if (action === void 0) return emit(hookStatus(process.cwd()), flags);
     if (action === "install") return emit(installHook(process.cwd(), { force: flags.has("force") }), flags);
     if (action === "uninstall") return emit(uninstallHook(process.cwd()), flags);
     throw new Error("anchor: hook needs install|uninstall");
@@ -5244,6 +5251,7 @@ var isMain = (() => {
 })();
 if (isMain) main();
 export {
+  main,
   parseArgs
 };
 /*! Bundled license information:

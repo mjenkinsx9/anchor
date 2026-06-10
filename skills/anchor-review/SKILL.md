@@ -1,5 +1,5 @@
 ---
-name: anchor
+name: anchor-review
 description: >
   Anchor is a personal code review tool for Claude Code. Use this skill
   when the user runs /anchor to perform a code review, initialize a
@@ -16,7 +16,7 @@ scripts emit JSON by default.
 
 **Locating the CLI:** `anchor` is NOT on PATH. This skill ships inside the
 anchor plugin, and the harness shows `Base directory for this skill: <dir>`
-when it loads — that directory is `<plugin-root>/skills/anchor`. Resolve the
+when it loads — that directory is `<plugin-root>/skills/anchor-review`. Resolve the
 plugin root (two directory levels up from the base directory) once. Then,
 whenever this skill says to run `anchor <args>`, execute via Bash:
 
@@ -35,7 +35,7 @@ the user the anchor plugin install looks broken and suggest
 | `review --explain <sha>` / `full --explain <sha>` | Run `anchor review show <sha>` and re-display the archived review — do not start a new review |
 | `full [target]` | Run `anchor doctor` first (bail if exit 1), then the Review workflow, then auto-archive (no need for the user to ask) |
 | `diff` / `context` / `learn` / `status` / `doctor` | Run the matching `anchor` command via Bash and show the result (use `--format text` for doctor/status when presenting to the user) |
-| `hook install` / `hook uninstall` | Run the matching `anchor hook ...` command in the current repo (manages the per-repo git pre-push reminder) |
+| `hook` / `hook install` / `hook uninstall` | Run the matching `anchor hook ...` command in the current repo (bare `hook` reports install status; manages the per-repo git pre-push reminder) |
 | (no args) | Default to `review` of uncommitted changes |
 
 ## Review workflow
