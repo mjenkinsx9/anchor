@@ -9,8 +9,8 @@ Claude Code session — no API keys, no servers, no per-call cost.
 Inside Claude Code, on any machine:
 
 ```
-/plugin marketplace add mjenkinsx9/claude-plugins
-/plugin install anchor@claude-plugins
+/plugin marketplace add mjenkinsx9/mjenkins-plugins
+/plugin install anchor@mjenkins-plugins
 ```
 
 Then in any repo:
