@@ -48,6 +48,24 @@ describe('loadConfig', () => {
     writeConfig('strictness: 3\n');
     expect(loadConfig(dir).config.strictness).toBe(3);
   });
+  it('ignore as a string → warning + default list (not silently broken)', () => {
+    writeConfig('ignore: "src/**"\n');
+    const { config, warnings } = loadConfig(dir);
+    expect(config.ignore).toEqual(DEFAULTS.ignore);
+    expect(warnings[0]).toContain('ignore must be a list');
+  });
+  it('numeric string max_diff_lines → warning + default (avoids broken comparisons)', () => {
+    writeConfig('max_diff_lines: "2000"\n');
+    const { config, warnings } = loadConfig(dir);
+    expect(config.max_diff_lines).toBe(2000);
+    expect(warnings[0]).toContain('max_diff_lines must be an integer');
+  });
+  it('does not alias DEFAULTS arrays', () => {
+    const { config } = loadConfig(dir);
+    config.ignore.push('mutated');
+    expect(DEFAULTS.ignore).not.toContain('mutated');
+    expect(loadConfig(dir).config.ignore).not.toContain('mutated');
+  });
 });
 
 describe('ensureGitignore', () => {
