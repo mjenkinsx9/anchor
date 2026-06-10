@@ -18,6 +18,45 @@ describe('saveReview', () => {
     expect(text).toContain('score: 4');
     expect(text).toContain('# The review body');
   });
+  it('extracts score and severities from the rendered review body when meta omits them', () => {
+    const body = [
+      '  Anchor Review  ·  uncommitted  ·  abc1234',
+      '',
+      '  Confidence: 4 / 5',
+      '  Reasoning:  Solid context.',
+      '',
+      '  🔴 CRITICAL  (1)',
+      '  🟠 HIGH  (2)',
+      '  🟡 MEDIUM  (0)',
+      '  🟢 LOW  (3)',
+      '',
+    ].join('\n');
+    const { path } = saveReview(repo.dir, body, { path: `${repo.dir}/.anchor/reviews/extracted.md`, sha: 'aaaa01', target: 'uncommitted' });
+    const text = readFileSync(path, 'utf8');
+    expect(text).toContain('score: 4');
+    expect(text).toContain('critical: 1');
+    expect(text).toContain('high: 2');
+    expect(text).toContain('medium: 0');
+    expect(text).toContain('low: 3');
+  });
+  it('explicit meta score/severities win over body extraction', () => {
+    const body = '  Confidence: 2 / 5\n  🔴 CRITICAL  (9)\n';
+    const { path } = saveReview(repo.dir, body, {
+      path: `${repo.dir}/.anchor/reviews/meta-wins.md`, sha: 'aaaa02',
+      score: 5, severities: { critical: 0, high: 0, medium: 0, low: 0 },
+    });
+    const text = readFileSync(path, 'utf8');
+    expect(text).toContain('score: 5');
+    expect(text).toContain('critical: 0');
+  });
+  it('body without the canonical markers falls back to null score and zero severities', () => {
+    const { path } = saveReview(repo.dir, 'freeform notes, no render format\n', {
+      path: `${repo.dir}/.anchor/reviews/freeform.md`, sha: 'aaaa03',
+    });
+    const text = readFileSync(path, 'utf8');
+    expect(text).toContain('score: null');
+    expect(text).toContain('critical: 0');
+  });
   it('honors an explicit path override', () => {
     const { path } = saveReview(repo.dir, 'body', { path: `${repo.dir}/.anchor/reviews/custom.md`, date: '2020-01-01', sha: 'cafe99' });
     expect(path.endsWith('custom.md')).toBe(true);
