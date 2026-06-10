@@ -1,6 +1,8 @@
 import { describe, it, expect, afterAll } from 'vitest';
-import { writeFileSync } from 'node:fs';
+import { writeFileSync, mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { spawnSync } from 'node:child_process';
 import { getDiff } from '../../lib/diff.mjs';
 import { makeFixtureRepo, writeFiles, commitAll } from '../helpers/fixture.mjs';
 
@@ -48,5 +50,29 @@ describe('getDiff local modes', () => {
   });
   it('bad ref surfaces git stderr', () => {
     expect(() => getDiff(['nope..alsonope'], { cwd: repo.dir })).toThrow(/git diff failed/);
+  });
+  it('uncommitted: includes brand-new untracked files', () => {
+    writeFiles(repo.dir, { 'src/brand-new.ts': 'export const fresh = 1;\n' });
+    const d = getDiff([], { cwd: repo.dir });
+    expect(d.files.map((f) => f.path)).toContain('src/brand-new.ts');
+    // the intent-to-add marker must be cleaned up afterwards:
+    const status = repo.git('status', '--porcelain');
+    expect(status).toContain('?? src/brand-new.ts');
+    repo.git('clean', '-f', 'src/brand-new.ts');
+  });
+  it('file mode counts lines without trailing-newline inflation', () => {
+    writeFiles(repo.dir, { 'three.txt': 'a\nb\nc\n' });
+    const d = getDiff(['@three.txt'], { cwd: repo.dir });
+    expect(d.files[0].added).toBe(3);
+    repo.git('clean', '-f', 'three.txt');
+  });
+  it('uncommitted on a zero-commit repo throws a friendly error', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'anchor-empty-'));
+    spawnSync('git', ['init', '-b', 'main'], { cwd: dir });
+    try {
+      expect(() => getDiff([], { cwd: dir })).toThrow(/no commits yet/);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
