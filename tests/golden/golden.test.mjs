@@ -1,3 +1,19 @@
+/**
+ * Golden-snapshot tests for deterministic review inputs.
+ *
+ * Each scenario builds an isolated fixture repo, commits a BASE state,
+ * applies an uncommitted change, then snapshots the exact payload that the
+ * review LLM would receive: { diff, context, learnings }.  These snapshots
+ * catch regressions in diff parsing, context gathering, and learnings I/O
+ * without invoking the LLM itself.
+ *
+ * Regenerating snapshots after an intentional behavior change:
+ *   pnpm exec vitest run --update tests/golden
+ *
+ * Note: `pnpm test:golden -- -u` does NOT work — pnpm passes the flag after
+ * a literal `--` separator that vitest ignores.  Use the command above instead.
+ */
+
 import { describe, it, expect } from 'vitest';
 import { fileURLToPath } from 'node:url';
 import { join, dirname } from 'node:path';
@@ -29,6 +45,7 @@ const SCENARIOS = {
 };
 
 const BASE = {
+  '.gitignore': '.anchor/\n',
   'src/sum.ts': 'export function sum(a: number, b: number) {\n  return a + b;\n}\n',
   'src/auth.ts': 'export function check(input, stored) {\n  return false;\n}\n',
   'src/find.ts': 'export const find = (xs, ys) => xs;\n',

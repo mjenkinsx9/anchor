@@ -16,22 +16,23 @@
 ────────────────────────────────────────────────────────────────
   🟠 HIGH  (1)
 ────────────────────────────────────────────────────────────────
-  src/auth/login.ts:42  ·  security
+  [1] src/auth/login.ts:42  ·  security
   ────────────────────────────────────────────────────────────
   Timing-attack vulnerability: comparing password hashes with `==` leaks
   information through execution time. An attacker can enumerate valid
   usernames or enumerate hash prefixes by measuring response latency.
-  Use `crypto.timingSafeEqual` for all secret comparisons.
+  Use `crypto.timingSafeEqual` for all secret comparisons. Note that `timingSafeEqual` requires both buffers to be the same length (it throws otherwise) and assumes `crypto` is imported from `node:crypto`.
 
   42 |   if (input.hash == stored.hash) {
 
   Suggested fix:
-  42 |   if (crypto.timingSafeEqual(Buffer.from(input.hash), Buffer.from(stored.hash))) {
+  41 |   const a = Buffer.from(input.hash), b = Buffer.from(stored.hash);
+  42 |   if (a.length === b.length && crypto.timingSafeEqual(a, b)) {
 
 ────────────────────────────────────────────────────────────────
   🟡 MEDIUM  (1)
 ────────────────────────────────────────────────────────────────
-  src/api/users.ts:88  ·  logic
+  [2] src/api/users.ts:88  ·  logic
   ────────────────────────────────────────────────────────────
   Unhandled promise rejection: `db.updateLastSeen(userId)` is called
   without `await` and without a `.catch()`. If the database call rejects,

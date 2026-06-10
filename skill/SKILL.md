@@ -119,7 +119,7 @@ Use exactly this structure (severities with zero findings show "None."):
 ────────────────────────────────────────────────────────────────
   🔴 CRITICAL  (<n>)
 ────────────────────────────────────────────────────────────────
-  <file>:<line>  ·  <category>
+  [N] <file>:<line>  ·  <category>
   ────────────────────────────────────────────────────────────
   <explanation>
 
