@@ -17,7 +17,7 @@
   🟠 HIGH  (1)
 ────────────────────────────────────────────────────────────────
   src/auth/login.ts:42  ·  security
-
+  ────────────────────────────────────────────────────────────
   Timing-attack vulnerability: comparing password hashes with `==` leaks
   information through execution time. An attacker can enumerate valid
   usernames or enumerate hash prefixes by measuring response latency.
@@ -31,8 +31,8 @@
 ────────────────────────────────────────────────────────────────
   🟡 MEDIUM  (1)
 ────────────────────────────────────────────────────────────────
-  src/api/users.ts:88  ·  correctness
-
+  src/api/users.ts:88  ·  logic
+  ────────────────────────────────────────────────────────────
   Unhandled promise rejection: `db.updateLastSeen(userId)` is called
   without `await` and without a `.catch()`. If the database call rejects,
   the error is silently swallowed on Node 18+ (it triggers
@@ -77,5 +77,5 @@
   diff: 2 files, +18/−4 (uncommitted)
   context: src/auth/middleware.ts (importer), src/db/index.ts (importee)
   learnings: .anchor/learnings.md (0 patterns)
-  codebase map: .anchor/map.md (34 symbols)
+  codebase map: .anchor/codebase-map.md (34 symbols)
 ────────────────────────────────────────────────────────────────
