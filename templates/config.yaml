@@ -1,0 +1,43 @@
+# Anchor per-repo config. Personal, gitignored by default.
+
+# Files/patterns to never review. Globs.
+ignore:
+  - "**/*.test.ts"
+  - "**/*.spec.ts"
+  - "**/fixtures/**"
+  - "**/*.lock"
+  - "**/*.generated.*"
+  - "**/migrations/**"
+  - "vendor/**"
+  - "node_modules/**"
+
+# Findings below this severity are suppressed.
+# One of: critical, high, medium, low. Default: low.
+min_severity: low
+
+# How aggressively the LLM should look for issues (prior, not filter).
+#   1 = verbose, 2 = balanced (default), 3 = critical-only
+strictness: 2
+
+# Maximum number of findings to surface per review. Default: 50.
+max_findings: 50
+
+# Categories to focus on. Default: all.
+# Options: logic, security, perf, style, docs, tests
+categories:
+  - logic
+  - security
+  - perf
+
+# Confidence floor. Findings the LLM rates below this are not surfaced. 0-5.
+min_confidence: 2
+
+# Diff limits
+max_diff_lines: 2000
+max_files: 100
+
+# Output options
+output:
+  show_whats_good: true
+  show_diff_stats: true
+  color: auto             # auto|always|never
