@@ -8,6 +8,5 @@
     "moduleResolution": "nodenext",
     "strict": false,
     "skipLibCheck": true
-  },
-  "include": ["bin/**/*.mjs", "lib/**/*.mjs"]
+  }
 }

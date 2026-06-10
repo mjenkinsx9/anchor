@@ -3,13 +3,17 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "bin": { "anchor": "bin/anchor.mjs" },
-  "engines": { "node": ">=18" },
+  "bin": {
+    "anchor": "bin/anchor.mjs"
+  },
+  "engines": {
+    "node": ">=18"
+  },
   "scripts": {
     "test": "vitest run tests/unit",
     "test:watch": "vitest tests/unit",
-    "test:integration": "vitest run tests/integration",
-    "test:golden": "vitest run tests/golden",
+    "test:integration": "vitest run --passWithNoTests tests/integration",
+    "test:golden": "vitest run --passWithNoTests tests/golden",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
@@ -17,6 +21,7 @@
     "minimatch": "^10.0.0"
   },
   "devDependencies": {
+    "@types/node": "^24.13.1",
     "typescript": "^5.6.0",
     "vitest": "^3.0.0"
   }
