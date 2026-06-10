@@ -19,9 +19,10 @@ describe('saveReview', () => {
     expect(text).toContain('# The review body');
   });
   it('honors an explicit path override', () => {
-    const { path } = saveReview(repo.dir, 'body', { path: `${repo.dir}/.anchor/reviews/custom.md` });
+    const { path } = saveReview(repo.dir, 'body', { path: `${repo.dir}/.anchor/reviews/custom.md`, date: '2020-01-01', sha: 'cafe99' });
     expect(path.endsWith('custom.md')).toBe(true);
     expect(existsSync(path)).toBe(true);
+    expect(showReview(repo.dir, 'cafe99').content).toContain('body');
   });
 });
 
@@ -35,7 +36,8 @@ describe('listReviews / showReview', () => {
   });
   it('shows a review by sha substring', () => {
     const all = listReviews(repo.dir);
-    const found = showReview(repo.dir, all.find((r) => r.sha)?.sha ?? '');
+    const auto = all.find((r) => /\d{4}-\d{2}-\d{2}-[0-9a-f]+\.md$/.test(r.file));
+    const found = showReview(repo.dir, auto.sha);
     expect(found.content).toContain('review body');
   });
   it('returns null for unknown sha', () => {
@@ -45,5 +47,13 @@ describe('listReviews / showReview', () => {
     const fresh = makeFixtureRepo({});
     expect(listReviews(fresh.dir)).toEqual([]);
     fresh.cleanup();
+  });
+  it('lists by frontmatter date, newest first', () => {
+    const all = listReviews(repo.dir);
+    const dates = all.map((r) => String(r.date));
+    expect(dates).toEqual([...dates].sort().reverse());
+  });
+  it('short needles (<4 chars) never match', () => {
+    expect(showReview(repo.dir, '06')).toBeNull();
   });
 });
