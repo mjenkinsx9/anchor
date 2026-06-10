@@ -1,6 +1,6 @@
 import { describe, it, expect, afterAll } from 'vitest';
 import { spawnSync } from 'node:child_process';
-import { writeFileSync, readFileSync, existsSync } from 'node:fs';
+import { writeFileSync, readFileSync, existsSync, rmSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { join, dirname } from 'node:path';
 import { makeFixtureRepo } from '../helpers/fixture.mjs';
@@ -75,5 +75,35 @@ describe('anchor CLI end-to-end', () => {
     const r = anchor(['diff'], { cwd: '/tmp' });
     expect(r.status).toBe(1);
     expect(r.stderr).toContain('not a git repository');
+  });
+  it('diff: stats reflect the ignore-filtered file set', () => {
+    // Modify a tracked file so there is a real diff
+    writeFileSync(join(repo.dir, 'src/a.ts'), "import { b } from './b';\nexport const a = b + 3;\n");
+    // Create a file matching the default **/*.lock ignore pattern
+    const lockFile = join(repo.dir, 'noise.lock');
+    writeFileSync(lockFile, 'locked content\n');
+    repo.git('add', '-N', 'noise.lock');
+    try {
+      const r = anchor(['diff']);
+      expect(r.status).toBe(0);
+      const d = JSON.parse(r.stdout);
+      // The .lock file must not appear in files
+      expect(d.files.map((f) => f.path)).not.toContain('noise.lock');
+      // stats must match the filtered file list
+      expect(d.stats.fileCount).toBe(d.files.length);
+      const expectedAdded = d.files.reduce((s, f) => s + f.added, 0);
+      expect(d.stats.totalAdded).toBe(expectedAdded);
+    } finally {
+      // Restore tracked file and remove the lock file so later tests are unaffected
+      repo.git('restore', '--staged', '--', 'noise.lock');
+      rmSync(lockFile, { force: true });
+      repo.git('checkout', '--', 'src/a.ts');
+    }
+  });
+  it('review save: custom path creates parent dirs', () => {
+    const customPath = join(repo.dir, '.anchor', 'deep', 'nested', 'r.md');
+    const r = anchor(['review', 'save', customPath], { input: '# Custom path review\nbody\n' });
+    expect(r.status).toBe(0);
+    expect(existsSync(customPath)).toBe(true);
   });
 });

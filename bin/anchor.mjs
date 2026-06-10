@@ -3,7 +3,7 @@ import { realpathSync, readFileSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { runDoctor } from '../lib/doctor.mjs';
 import { loadConfig, ensureGitignore } from '../lib/config.mjs';
-import { getDiff } from '../lib/diff.mjs';
+import { getDiff, withStats } from '../lib/diff.mjs';
 import { getContext } from '../lib/context.mjs';
 import { listLearnings, addLearning, removeLearning } from '../lib/learn.mjs';
 import { saveReview, listReviews, showReview } from '../lib/review.mjs';
@@ -92,21 +92,22 @@ const HANDLERS = {
     requireRepo();
     const config = loadCfg();
     const d = getDiff(rawTokens, { cwd: process.cwd() });
-    d.files = d.files.filter((f) => !isIgnored(f.path, config.ignore));
-    const totalLines = d.files.reduce((s, f) => s + f.added + f.removed, 0);
+    const filtered = d.files.filter((f) => !isIgnored(f.path, config.ignore));
+    const result = withStats({ ...d, files: filtered });
+    const totalLines = result.files.reduce((s, f) => s + f.added + f.removed, 0);
     if (totalLines > config.max_diff_lines) {
       throw new Error(
         `anchor: diff is ${totalLines.toLocaleString()} lines (max is ${config.max_diff_lines.toLocaleString()}). ` +
         'Adjust .anchor/config.yaml -> max_diff_lines, or split the PR.',
       );
     }
-    if (d.files.length > config.max_files) {
+    if (result.files.length > config.max_files) {
       throw new Error(
-        `anchor: diff touches ${d.files.length} files (max is ${config.max_files}). ` +
+        `anchor: diff touches ${result.files.length} files (max is ${config.max_files}). ` +
         'Adjust .anchor/config.yaml -> max_files, or split the PR.',
       );
     }
-    emit(d, flags);
+    emit(result, flags);
   },
 
   context(positional, flags, rawTokens) {
@@ -116,7 +117,7 @@ const HANDLERS = {
     let files;
     if (flags.has('from-diff')) {
       const fd = flags.get('from-diff');
-      const targetTokens = typeof fd === 'string' ? [fd] : positional;
+      const targetTokens = typeof fd === 'string' ? [fd, ...positional] : positional;
       files = getDiff(targetTokens, { cwd: process.cwd() }).files.map((f) => f.path);
     } else {
       files = positional;
