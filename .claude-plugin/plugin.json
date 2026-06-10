@@ -1,6 +1,6 @@
 {
   "name": "anchor",
   "description": "Personal code review: deterministic CLI gathers diff/context/learnings; the active Claude session reasons over them.",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "author": { "name": "Mike Jenkins" }
 }

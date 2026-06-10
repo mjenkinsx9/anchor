@@ -34,7 +34,7 @@ Update: bump happens in this repo; machines pick it up with `/plugin update anch
 ## Layout
 
 - `.claude-plugin/plugin.json` — plugin manifest
-- `skills/anchor/SKILL.md` — the review + init workflows Claude follows
+- `skills/anchor-review/SKILL.md` — the review + init workflows Claude follows
 - `commands/anchor.md` — the `/anchor` slash command
 - `hooks/hooks.json`, `hooks/post-push-reminder.sh` — PostToolUse push reminder
 - `bin/anchor.mjs`, `lib/` — deterministic scripts (source)

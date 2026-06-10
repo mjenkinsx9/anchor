@@ -1,5 +1,27 @@
 # Changelog
 
+## v0.2.1 — 2026-06-10
+
+Two install-breaking fixes found while field-testing v0.2.0.
+
+- Skill renamed `anchor` → `anchor-review`: the skill and the `/anchor` command
+  shared one name, so the Skill tool resolved the command instead of the skill
+  and SKILL.md never loaded (Claude fell back to guessing plugin paths)
+- `bin/anchor.mjs` is now a loader that runs `lib/cli.mjs` in dev checkouts and
+  falls back to the bundled `dist/anchor.mjs` where node_modules is absent
+  (plugin cache) — previously it crashed with ERR_MODULE_NOT_FOUND: js-yaml
+- CLI body moved to `lib/cli.mjs` (new bundle entry); behavior unchanged
+- New regression tests: plugin-layout name-collision check, bin fallback
+  without node_modules
+
+Plus three CLI papercuts from the same field test:
+
+- `uncommitted` and `staged` are now valid target words, so the `mode` the
+  diff JSON reports round-trips into `anchor context --from-diff <mode>`
+- Bare `anchor learn` defaults to `learn list` instead of exiting 1
+- Bare `anchor hook` reports install status (`{installed, path}`) instead of
+  exiting 1
+
 ## v0.2.0 — 2026-06-10
 
 Formal Claude Code plugin.

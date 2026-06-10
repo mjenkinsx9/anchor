@@ -11,9 +11,10 @@ argument-hint: "[init|diff|context|review|learn|status|doctor|full|hook] [target
 
 The user invoked Anchor with: $ARGUMENTS
 
-Invoke the `anchor` skill (Skill tool) and follow its subcommand dispatch
-table with these arguments. The skill knows how to locate the bundled anchor
-CLI inside this plugin — do not assume an `anchor` command is on PATH.
+Invoke the `anchor-review` skill (Skill tool, name `anchor:anchor-review`)
+and follow its subcommand dispatch table with these arguments. The skill
+knows how to locate the bundled anchor CLI inside this plugin — do not
+assume an `anchor` command is on PATH.
 
 Quick reference:
 - `init [--refresh] [--depth N] [--no-prs] [--no-graph]` → init workflow

@@ -38,8 +38,18 @@ describe('anchor CLI skeleton', () => {
     const r = anchor(['config']);
     expect(() => JSON.parse(r.stdout)).not.toThrow();
   });
+  it('learn with no action defaults to list', () => {
+    const r = anchor(['learn']);
+    expect(r.status).toBe(0);
+    expect(JSON.parse(r.stdout)).toEqual({ patterns: [] });
+  });
+  it('diff accepts the explicit "uncommitted" target word', () => {
+    const r = anchor(['diff', 'uncommitted']);
+    expect(r.status).toBe(0);
+    expect(JSON.parse(r.stdout).mode).toBe('uncommitted');
+  });
   it('parseArgs supports --key=value form', async () => {
-    const { parseArgs } = await import(BIN);
+    const { parseArgs } = await import('../../lib/cli.mjs');
     const { flags } = parseArgs(['--max-files=50']);
     expect(flags.get('max-files')).toBe('50');
   });
