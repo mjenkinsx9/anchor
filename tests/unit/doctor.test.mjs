@@ -36,4 +36,8 @@ describe('runDoctor', () => {
     const { checks } = runDoctor({ cwd: tmpdir() });
     for (const c of checks.filter((c) => !c.ok)) expect(c.fix).toBeTruthy();
   });
+  it('overall ok is false when an error-level check fails', () => {
+    const { ok } = runDoctor({ cwd: tmpdir() });
+    expect(ok).toBe(false);
+  });
 });
