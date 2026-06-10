@@ -58,4 +58,19 @@ describe('getDiff PR mode', () => {
     expect(() => getDiff(['pr', '123'], { cwd: repo.dir, env: noGh }))
       .toThrow(/PR mode requires the `gh` CLI/);
   });
+  it('malformed gh pr view output → anchor-prefixed error', () => {
+    const badDir = mkdtempSync(join(tmpdir(), 'anchor-gh-bad-'));
+    writeFileSync(join(badDir, 'gh'), `#!/usr/bin/env bash
+if [ "$1" = "--version" ]; then echo "gh version 2.0.0 (mock)"; exit 0; fi
+echo "Warning: token scope changed"
+exit 0
+`);
+    chmodSync(join(badDir, 'gh'), 0o755);
+    try {
+      expect(() => getDiff(['pr', '9'], { cwd: repo.dir, env: { ...process.env, PATH: `${badDir}:${process.env.PATH}` } }))
+        .toThrow(/anchor: gh pr view returned unexpected output/);
+    } finally {
+      rmSync(badDir, { recursive: true, force: true });
+    }
+  });
 });
