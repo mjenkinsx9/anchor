@@ -11,14 +11,25 @@ harness; each manifest just declares them.
 | Claude Code      | `.claude-plugin/plugin.json`  | ✓ | ✓ | ✓ |
 | GitHub Copilot CLI | *(none — uses Claude fallback)* | ✓ | ✓ | ✓ |
 | OpenAI Codex     | `.codex-plugin/plugin.json`   | ✓ | — | — |
-| Cursor           | `.cursor-plugin/plugin.json`  | ✓ | ✓ | ✓ |
+| Cursor           | `.cursor-plugin/plugin.json`  | ✓ | ✓ | — |
 | Gemini CLI       | `gemini-extension.json`       | ✓ | — | — |
 
 A `—` for commands/hooks means that harness's manifest does not wire those
-components: Codex's documented manifest fields are `name`/`version`/
-`description`/`skills`; Cursor auto-discovers commands but the Claude-format
-`hooks/hooks.json` (PostToolUse + `${CLAUDE_PLUGIN_ROOT}`) is Claude/Copilot-
-specific, so it is only declared where the harness consumes that format.
+components:
+
+- **Codex** — its documented manifest fields are `name`/`version`/`description`/
+  `skills`, so there is no commands or hooks key to set.
+- **Cursor** — it *does* expose a `hooks` field, but its hook schema uses
+  camelCase event names (`preToolUse`, `postToolUse`) and does not substitute
+  `${CLAUDE_PLUGIN_ROOT}`. Our `hooks/hooks.json` is Claude-format (`PostToolUse`
+  + `${CLAUDE_PLUGIN_ROOT}`), so wiring it into the Cursor manifest would point
+  at a config Cursor cannot interpret. The push-reminder hook stays
+  Claude/Copilot-only rather than being declared in a format the harness would
+  misread.
+- **Gemini** — `gemini-extension.json` has no `skills`/`commands`/`hooks` keys in
+  its documented schema; skills are **auto-discovered** from the `skills/`
+  directory (no manifest field required), and the Claude-format command/hooks
+  files are not declared.
 
 ## Known caveat: locating the bundled CLI on non-Claude harnesses
 

@@ -8,6 +8,7 @@ const read = (p) => JSON.parse(readFileSync(join(ROOT, p), 'utf8'));
 
 // Canonical source of truth for plugin metadata.
 const canonical = read('.claude-plugin/plugin.json');
+const pkg = read('package.json');
 
 // Per-harness manifests that point at the shared skills/commands/hooks and must
 // keep name/version/description in sync with the canonical manifest.
@@ -18,6 +19,11 @@ const harnessManifests = [
 ];
 
 describe('cross-harness manifest metadata', () => {
+  // Tie the whole chain together: package.json ⟷ canonical ⟷ harness manifests.
+  it('the canonical manifest version matches package.json', () => {
+    expect(canonical.version).toBe(pkg.version);
+  });
+
   for (const rel of harnessManifests) {
     describe(rel, () => {
       it('exists', () => {
@@ -37,11 +43,13 @@ describe('cross-harness manifest metadata', () => {
     expect(read('.codex-plugin/plugin.json').skills).toBe('./skills/');
   });
 
-  it('Cursor manifest points at the shared skills/commands/hooks', () => {
+  it('Cursor manifest points skills/commands at the shared dirs and does not wire the Claude-format hooks', () => {
     const m = read('.cursor-plugin/plugin.json');
     expect(m.skills).toBe('./skills/');
     expect(m.commands).toBe('./commands/');
-    expect(m.hooks).toBe('./hooks/hooks.json');
+    // Cursor's hook schema (camelCase events, no ${CLAUDE_PLUGIN_ROOT}) is
+    // incompatible with our Claude-format hooks/hooks.json — must stay unset.
+    expect(m.hooks).toBeUndefined();
   });
 
   it('the referenced shared directories actually exist', () => {
