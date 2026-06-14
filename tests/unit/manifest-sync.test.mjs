@@ -13,7 +13,6 @@ const canonical = read('.claude-plugin/plugin.json');
 // keep name/version/description in sync with the canonical manifest.
 const harnessManifests = [
   '.codex-plugin/plugin.json',
-  '.factory-plugin/plugin.json',
   '.cursor-plugin/plugin.json',
   'gemini-extension.json',
 ];

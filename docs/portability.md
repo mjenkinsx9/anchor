@@ -11,17 +11,14 @@ harness; each manifest just declares them.
 | Claude Code      | `.claude-plugin/plugin.json`  | ✓ | ✓ | ✓ |
 | GitHub Copilot CLI | *(none — uses Claude fallback)* | ✓ | ✓ | ✓ |
 | OpenAI Codex     | `.codex-plugin/plugin.json`   | ✓ | — | — |
-| Factory Droid    | `.factory-plugin/plugin.json` | ✓ | ✓ | — |
 | Cursor           | `.cursor-plugin/plugin.json`  | ✓ | ✓ | ✓ |
 | Gemini CLI       | `gemini-extension.json`       | ✓ | — | — |
-| OpenCode         | *(gap — see `docs/opencode.md`)* | — | — | — |
 
 A `—` for commands/hooks means that harness's manifest does not wire those
 components: Codex's documented manifest fields are `name`/`version`/
-`description`/`skills`; Factory and Cursor auto-discover commands but the
-Claude-format `hooks/hooks.json` (PostToolUse + `${CLAUDE_PLUGIN_ROOT}`) is
-Claude/Copilot-specific, so it is only declared where the harness consumes that
-format.
+`description`/`skills`; Cursor auto-discovers commands but the Claude-format
+`hooks/hooks.json` (PostToolUse + `${CLAUDE_PLUGIN_ROOT}`) is Claude/Copilot-
+specific, so it is only declared where the harness consumes that format.
 
 ## Known caveat: locating the bundled CLI on non-Claude harnesses
 
@@ -37,6 +34,6 @@ that line will hit the skill's built-in guard:
 i.e. the skill degrades to a clear error instead of guessing a path. The
 manifests in this repo are written to the **current** published schemas for each
 harness, but only Claude Code's loader is runtime-verified here (`claude plugin
-validate .`). On Codex, Factory, Cursor, and Gemini the SKILL.md will load, but
+validate .`). On Codex, Cursor, and Gemini the SKILL.md will load, but
 end-to-end CLI invocation depends on whether that harness surfaces an equivalent
 skill base directory — verify against a real install before relying on it.

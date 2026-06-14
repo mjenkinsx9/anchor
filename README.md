@@ -37,18 +37,15 @@ See [`docs/portability.md`](docs/portability.md) for the mapping and caveats.
 | **Claude Code** | `.claude-plugin/plugin.json` | `/plugin marketplace add mjenkinsx9/mjenkins-toolbox` then `/plugin install anchor@mjenkins-toolbox` | ✅ runtime-validated (`claude plugin validate .`) |
 | **GitHub Copilot CLI** | *(none — reads `.claude-plugin/plugin.json` as a documented fallback)* | add this repo as a plugin source | ✅ manifest port (fallback per [docs](https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-plugin-reference)) |
 | **OpenAI Codex** | `.codex-plugin/plugin.json` | list the repo in a Codex marketplace catalog and install | ✅ manifest port ([docs](https://developers.openai.com/codex/plugins/build)) |
-| **Factory Droid** | `.factory-plugin/plugin.json` | add via the Factory plugin manager | ✅ manifest port ([docs](https://docs.factory.ai/cli/configuration/plugins)) |
 | **Cursor** | `.cursor-plugin/plugin.json` | add via Cursor's plugin manager | ✅ manifest port ([docs](https://cursor.com/docs/reference/plugins)) |
 | **Gemini CLI** | `gemini-extension.json` | `gemini extensions install <repo>` | ✅ manifest port — skills auto-discovered ([docs](https://geminicli.com/docs/extensions/reference/)) |
-| **OpenCode** | *(gap)* | — | 📝 documented gap, [`docs/opencode.md`](docs/opencode.md) ([docs](https://opencode.ai/docs/plugins/)) |
 
 > **Honesty note.** Only Claude Code's loader is runtime-verified in this repo
-> (`claude plugin validate .`). The Codex/Factory/Cursor/Gemini manifests are
-> written to each harness's **current** published schema but were not executed
-> against a live install. The SKILL.md's bundled-CLI lookup relies on Claude
-> Code's "skill base directory" convention — see the caveat in
-> [`docs/portability.md`](docs/portability.md). OpenCode has no skills primitive,
-> so it is a documented gap, not a shipped port.
+> (`claude plugin validate .`). The Codex/Cursor/Gemini manifests are written to
+> each harness's **current** published schema but were not executed against a
+> live install. The SKILL.md's bundled-CLI lookup relies on Claude Code's "skill
+> base directory" convention — see the caveat in
+> [`docs/portability.md`](docs/portability.md).
 
 > Codex marketplace listing lives in the **catalog** repo, not here: Codex reads
 > `.agents/plugins/marketplace.json` with `source.path` entries pointing at the
@@ -97,8 +94,8 @@ An optional per-repo git push reminder is also available:
 | Path | What it is |
 |---|---|
 | `.claude-plugin/plugin.json` | Claude Code manifest (canonical metadata; Copilot CLI fallback) |
-| `.codex-plugin/plugin.json` · `.factory-plugin/plugin.json` · `.cursor-plugin/plugin.json` · `gemini-extension.json` | per-harness manifests pointing at the shared `skills/` |
-| `docs/portability.md` · `docs/opencode.md` | cross-harness mapping + the OpenCode gap |
+| `.codex-plugin/plugin.json` · `.cursor-plugin/plugin.json` · `gemini-extension.json` | per-harness manifests pointing at the shared `skills/` |
+| `docs/portability.md` | cross-harness mapping + caveats |
 | `skills/anchor-review/SKILL.md` | the review + init workflows the agent follows (the portable core) |
 | `commands/anchor.md` | the `/anchor` slash command |
 | `hooks/hooks.json`, `hooks/post-push-reminder.sh` | PostToolUse push reminder |
