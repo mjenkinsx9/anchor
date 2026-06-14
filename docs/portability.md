@@ -1,46 +1,60 @@
 # Cross-harness portability notes
 
 Anchor ships one portable core — the Agent Skill at
-`skills/anchor-review/SKILL.md` — and a thin per-harness manifest that points at
-the existing `skills/` (and, where supported, `commands/` and `hooks/`)
-directories. The skills and commands are **not** duplicated or rewritten per
-harness; each manifest just declares them.
+`skills/anchor-review/SKILL.md` — plus a thin per-harness manifest. The skill is
+the only component **every** harness loads. The `/anchor` command and the
+push-reminder hook are Claude-Code-native and only some harnesses pick them up,
+because command and hook **formats differ between harnesses**. Nothing is
+duplicated or rewritten; the manifests just point at the shared directories.
 
-| Harness          | Manifest added                | Skills | Commands | Hooks |
-|------------------|-------------------------------|:------:|:--------:|:-----:|
-| Claude Code      | `.claude-plugin/plugin.json`  | ✓ | ✓ | ✓ |
-| GitHub Copilot CLI | *(none — uses Claude fallback)* | ✓ | ✓ | ✓ |
-| OpenAI Codex     | `.codex-plugin/plugin.json`   | ✓ | — | — |
-| Cursor           | `.cursor-plugin/plugin.json`  | ✓ | ✓ | — |
-| Gemini CLI       | `gemini-extension.json`       | ✓ | — | — |
+The table below is what actually **loads/runs**, not just what the manifest
+declares (several harnesses auto-discover default directories):
 
-A `—` in the table means the component is **not declared in that harness's
-manifest** — which is *not* the same as "the component never runs," because some
-harnesses auto-discover default directories. The push-reminder hook
-(`hooks/hooks.json`) is Claude-format: `PostToolUse` + the nested
-`{ "hooks": [ … ] }` shape + `${CLAUDE_PLUGIN_ROOT}`. How each harness treats it:
+| Harness            | Manifest                        | Skill | `/anchor` cmd | Push hook |
+|--------------------|---------------------------------|:-----:|:-------------:|:---------:|
+| Claude Code        | `.claude-plugin/plugin.json`    | ✓ | ✓ | ✓ |
+| GitHub Copilot CLI | *(none — Claude fallback)*      | ✓ | ✓ | ⚠️ unverified |
+| OpenAI Codex       | `.codex-plugin/plugin.json`     | ✓ | — | ✓ |
+| Cursor             | `.cursor-plugin/plugin.json`    | ✓ | ✓ | — |
+| Gemini CLI         | `gemini-extension.json`         | ✓ | — | ✗ |
 
-- **Codex** — manifest fields are `name`/`version`/`description`/`skills`, so
-  there is no hooks key to set, **but Codex auto-discovers the root file**:
-  *"if your plugin stores hooks at `./hooks/hooks.json`, you do not need a
-  `hooks` entry … Codex checks that default file automatically."* Codex is
-  built for Claude-hook compatibility — it *"also sets `CLAUDE_PLUGIN_ROOT` and
-  `CLAUDE_PLUGIN_DATA` for compatibility with existing plugin hooks"* and uses
-  the same nested, PascalCase event schema — so the push reminder is **expected
-  to run on Codex** despite not being in `.codex-plugin/plugin.json`. (Whether
-  Codex recognizes the `PostToolUse` event specifically is not runtime-verified
-  here; the format and variables are compatible.)
-- **Cursor** — it *does* expose a `hooks` field, but its hook schema uses
-  camelCase events (`preToolUse`/`postToolUse`) and `${CURSOR_PLUGIN_ROOT}`, not
-  Claude's `PostToolUse` + `${CLAUDE_PLUGIN_ROOT}`. Cursor's auto-discovery scans
+### Command (`/anchor`)
+
+- **Claude / Cursor** declare `"commands": "./commands/"` and load the markdown
+  command directly.
+- **Copilot** has no default `commands` path (unlike `skills`/`agents`), so the
+  canonical `.claude-plugin/plugin.json` declares `"commands": "./commands/"` —
+  harmless for Claude (the key points into the default folder) and it registers
+  `/anchor` for Copilot's fallback read.
+- **Codex** has no `commands` field in its documented manifest schema.
+- **Gemini** commands are TOML files (`commands/*.toml`), not the markdown
+  `commands/anchor.md` we ship, so `/anchor` does not register. Gemini is
+  effectively **skill-only**.
+
+### Push-reminder hook (`hooks/hooks.json`)
+
+The file is Claude-format: `PostToolUse` + the nested `{ "hooks": [ … ] }` shape
++ `${CLAUDE_PLUGIN_ROOT}`. Harness handling, all verified against current docs:
+
+- **Codex** — auto-discovers the root file (*"you do not need a `hooks` entry …
+  Codex checks that default file automatically"*) and is Claude-hook compatible
+  (*"also sets `CLAUDE_PLUGIN_ROOT` and `CLAUDE_PLUGIN_DATA` for compatibility
+  with existing plugin hooks"*, same nested PascalCase schema), so the hook is
+  **expected to run**.
+- **Copilot** — documents `${PLUGIN_ROOT}` for hook commands and does not
+  publish its `hooks.json` schema or a `${CLAUDE_PLUGIN_ROOT}` compat alias on
+  the reference page, so whether our hook runs is **unverified** (marked ⚠️).
+- **Cursor** — different schema (camelCase `preToolUse`/`postToolUse`,
+  `${CURSOR_PLUGIN_ROOT}`); its auto-discovery scans
   `rules/`/`skills/`/`agents/`/`commands/` (**not** `hooks/`), so leaving the
-  manifest `hooks` field unset keeps the incompatible Claude-format file from
-  being wired — the push reminder simply does not run on Cursor.
-- **Gemini** — `gemini-extension.json` has no `skills`/`commands`/`hooks` keys;
-  skills are **auto-discovered** from `skills/` (no manifest field required).
-  Gemini's handling of a root `hooks/hooks.json`, and its hook event/variable
-  names, are not verified here, so Anchor makes no claim that the push reminder
-  runs on Gemini.
+  manifest `hooks` field unset keeps the incompatible file from being wired — the
+  reminder simply does not run on Cursor.
+- **Gemini** — *does* auto-discover the root file (*"Define hooks in a
+  `hooks/hooks.json` file … hooks are not defined in the `gemini-extension.json`
+  manifest"*) but uses `${extensionPath}` (not `${CLAUDE_PLUGIN_ROOT}`) and a
+  different event vocabulary, so the discovered Claude-format hook **will not
+  resolve** — a dead/no-op hook (marked ✗). A faithful reminder on Gemini would
+  need a Gemini-native `hooks/hooks.json`, which is not shipped here.
 
 ## Known caveat: locating the bundled CLI on non-Claude harnesses
 

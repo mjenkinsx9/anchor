@@ -25,27 +25,52 @@ per-call cost.**
 
 ## 🚀 Install
 
-The portable core is the Agent Skill at `skills/anchor-review/SKILL.md`. Each
-harness gets a thin manifest that points at the **same** `skills/` (and, where
-supported, `commands/`/`hooks/`) directories — nothing is duplicated per harness.
-See [`docs/portability.md`](docs/portability.md) for the mapping and caveats.
+The portable core is the Agent Skill at `skills/anchor-review/SKILL.md` — that's
+what every harness gets. The `/anchor` **command** and the push-reminder **hook**
+are Claude-Code-native conveniences that only some harnesses pick up, because
+command/hook formats differ across harnesses. Each manifest points at the
+**same** shared directories — nothing is duplicated. See
+[`docs/portability.md`](docs/portability.md) for the per-component detail.
 
 ### Per-harness install
 
-| Harness | Manifest | Install / load | Status |
-|---|---|---|---|
-| **Claude Code** | `.claude-plugin/plugin.json` | `/plugin marketplace add mjenkinsx9/mjenkins-toolbox` then `/plugin install anchor@mjenkins-toolbox` | ✅ runtime-validated (`claude plugin validate .`) |
-| **GitHub Copilot CLI** | *(none — reads `.claude-plugin/plugin.json` as a documented fallback)* | add this repo as a plugin source | ✅ manifest port (fallback per [docs](https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-plugin-reference)) |
-| **OpenAI Codex** | `.codex-plugin/plugin.json` | list the repo in a Codex marketplace catalog and install | ✅ manifest port ([docs](https://developers.openai.com/codex/plugins/build)) |
-| **Cursor** | `.cursor-plugin/plugin.json` | add via Cursor's plugin manager | ✅ manifest port ([docs](https://cursor.com/docs/reference/plugins)) |
-| **Gemini CLI** | `gemini-extension.json` | `gemini extensions install <repo>` | ✅ manifest port — skills auto-discovered ([docs](https://geminicli.com/docs/extensions/reference/)) |
+"Skill / Command / Hook" below is what actually loads on each harness, not just
+what the manifest declares.
 
-> **Honesty note.** Only Claude Code's loader is runtime-verified in this repo
-> (`claude plugin validate .`). The Codex/Cursor/Gemini manifests are written to
-> each harness's **current** published schema but were not executed against a
-> live install. The SKILL.md's bundled-CLI lookup relies on Claude Code's "skill
-> base directory" convention — see the caveat in
-> [`docs/portability.md`](docs/portability.md).
+| Harness | Manifest | Skill | `/anchor` cmd | Push hook |
+|---|---|:--:|:--:|:--:|
+| **Claude Code** | `.claude-plugin/plugin.json` | ✅ | ✅ | ✅ |
+| **GitHub Copilot CLI** | *(none — reads `.claude-plugin/plugin.json` fallback)* | ✅ | ✅¹ | ⚠️ unverified² |
+| **OpenAI Codex** | `.codex-plugin/plugin.json` | ✅ | ➖³ | ✅⁴ |
+| **Cursor** | `.cursor-plugin/plugin.json` | ✅ | ✅ | ➖⁵ |
+| **Gemini CLI** | `gemini-extension.json` | ✅ | ➖⁶ | ❌⁶ |
+
+¹ Copilot's `commands` field has no default path, so the canonical manifest now
+declares `"commands": "./commands/"` (harmless for Claude) to register `/anchor`.
+² Copilot documents `${PLUGIN_ROOT}`; our hook uses `${CLAUDE_PLUGIN_ROOT}` and
+the page doesn't document a compat alias — so hook behaviour is unverified.
+³ `commands` isn't a documented field in the Codex plugin manifest.
+⁴ Codex auto-discovers `hooks/hooks.json` and sets `CLAUDE_PLUGIN_ROOT` for
+Claude-hook compatibility, so the hook is expected to run.
+⁵ Cursor's hook schema differs (camelCase events, `${CURSOR_PLUGIN_ROOT}`); the
+manifest deliberately leaves `hooks` unset so the incompatible file isn't wired.
+⁶ Gemini commands are TOML (not our markdown) and its hooks use `${extensionPath}`
+/ different events, so neither the command nor the Claude-format hook works there
+— Gemini is **skill-only**. See `docs/portability.md`.
+
+Docs: [Claude](https://code.claude.com/docs/en/plugins-reference) ·
+[Copilot](https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-plugin-reference) ·
+[Codex](https://developers.openai.com/codex/plugins/build) ·
+[Cursor](https://cursor.com/docs/reference/plugins) ·
+[Gemini](https://geminicli.com/docs/extensions/reference/)
+
+> **Honesty note.** Only Claude Code's loader is runtime-verified here
+> (`claude plugin validate .` → passed). The Codex/Cursor/Gemini/Copilot
+> manifests follow each harness's **current** published schema but were not
+> executed against a live install. The **skill** is the portable core and is the
+> only component every harness loads; commands/hooks are best-effort per the
+> table above. The SKILL.md's bundled-CLI lookup also relies on Claude Code's
+> "skill base directory" convention — see [`docs/portability.md`](docs/portability.md).
 
 > Codex marketplace listing lives in the **catalog** repo, not here: Codex reads
 > `.agents/plugins/marketplace.json` with `source.path` entries pointing at the
