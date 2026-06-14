@@ -1,0 +1,10 @@
+{
+  "hooks": {
+    "afterShellExecution": [
+      {
+        "command": "${CURSOR_PLUGIN_ROOT}/hooks/push-reminder-cursor.sh",
+        "matcher": "git push"
+      }
+    ]
+  }
+}
