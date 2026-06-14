@@ -6,7 +6,7 @@
 
 **A `/anchor` slash command + skill backed by small deterministic scripts — the LLM is your active Claude Code session.**
 
-![Plugin version](https://img.shields.io/badge/plugin-v0.2.2-blue)
+![Plugin version](https://img.shields.io/badge/plugin-v0.2.3-blue)
 ![Node](https://img.shields.io/badge/node-%E2%89%A518-339933?logo=node.js&logoColor=white)
 ![pnpm](https://img.shields.io/badge/pnpm-workspace-F69220?logo=pnpm&logoColor=white)
 ![Made for Claude Code](https://img.shields.io/badge/made_for-Claude_Code-d97757)

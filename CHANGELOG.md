@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.2.3 — 2026-06-14
+
+- Add richer Codex plugin metadata for directory presentation and discovery.
+- Keep Codex, Cursor, Gemini, Claude, and package versions in sync so plugin
+  cache refreshes pick up the metadata update.
+
 ## v0.2.2 — 2026-06-10
 
 - `anchor review save` now extracts `score` and severity counts from the

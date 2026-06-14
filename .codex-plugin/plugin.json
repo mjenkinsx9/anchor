@@ -1,6 +1,26 @@
 {
   "name": "anchor",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "description": "Personal code review: deterministic CLI gathers diff/context/learnings; the active Claude session reasons over them.",
-  "skills": "./skills/"
+  "author": { "name": "Mike Jenkins" },
+  "homepage": "https://github.com/mjenkinsx9/anchor",
+  "repository": "https://github.com/mjenkinsx9/anchor",
+  "license": "MIT",
+  "keywords": ["code-review", "git", "diff", "agent-skills"],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Anchor",
+    "shortDescription": "Personal code review inside your agent session.",
+    "longDescription": "Anchor gathers diffs, repository context, and local learnings so Codex can review changes with severity-graded findings without external services or API keys.",
+    "developerName": "Mike Jenkins",
+    "category": "Developer Tools",
+    "capabilities": ["Interactive", "Read", "Write"],
+    "defaultPrompt": [
+      "Review my current changes with Anchor.",
+      "Run an Anchor review for this branch.",
+      "Initialize Anchor for this repo."
+    ],
+    "websiteURL": "https://github.com/mjenkinsx9/anchor",
+    "brandColor": "#0F766E"
+  }
 }
