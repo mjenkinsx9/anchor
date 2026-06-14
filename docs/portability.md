@@ -15,7 +15,7 @@ declares (several harnesses auto-discover default directories):
 | Claude Code        | `.claude-plugin/plugin.json`    | ✓ | ✓ | ✓ |
 | GitHub Copilot CLI | *(none — Claude fallback)*      | ✓ | ✓ | ⚠️ unverified |
 | OpenAI Codex       | `.codex-plugin/plugin.json`     | ✓ | — | ✓ |
-| Cursor             | `.cursor-plugin/plugin.json`    | ✓ | ✓ | — |
+| Cursor             | `.cursor-plugin/plugin.json`    | ✓ | ✓ | 🟡 native |
 | Gemini CLI         | `gemini-extension.json`         | ✓ | — | ✗ |
 
 ### Command (`/anchor`)
@@ -31,10 +31,13 @@ declares (several harnesses auto-discover default directories):
   `commands/anchor.md` we ship, so `/anchor` does not register. Gemini is
   effectively **skill-only**.
 
-### Push-reminder hook (`hooks/hooks.json`)
+### Push-reminder hook
 
-The file is Claude-format: `PostToolUse` + the nested `{ "hooks": [ … ] }` shape
-+ `${CLAUDE_PLUGIN_ROOT}`. Harness handling, all verified against current docs:
+The shared root `hooks/hooks.json` is Claude-format: `PostToolUse` + the nested
+`{ "hooks": [ … ] }` shape + `${CLAUDE_PLUGIN_ROOT}` (script:
+`hooks/post-push-reminder.sh`). Hook event names **and** the stdout→context
+protocol differ per harness, so a single file can't serve all of them. Handling,
+all checked against current docs:
 
 - **Codex** — auto-discovers the root file (*"you do not need a `hooks` entry …
   Codex checks that default file automatically"*) and is Claude-hook compatible
@@ -44,17 +47,25 @@ The file is Claude-format: `PostToolUse` + the nested `{ "hooks": [ … ] }` sha
 - **Copilot** — documents `${PLUGIN_ROOT}` for hook commands and does not
   publish its `hooks.json` schema or a `${CLAUDE_PLUGIN_ROOT}` compat alias on
   the reference page, so whether our hook runs is **unverified** (marked ⚠️).
-- **Cursor** — different schema (camelCase `preToolUse`/`postToolUse`,
-  `${CURSOR_PLUGIN_ROOT}`); its auto-discovery scans
-  `rules/`/`skills/`/`agents/`/`commands/` (**not** `hooks/`), so leaving the
-  manifest `hooks` field unset keeps the incompatible file from being wired — the
-  reminder simply does not run on Cursor.
+- **Cursor** — different schema (camelCase events, `${CURSOR_PLUGIN_ROOT}`), and
+  its auto-discovery scans `rules/`/`skills/`/`agents/`/`commands/` (**not**
+  `hooks/`). So Anchor ships a **Cursor-native** hook —
+  `hooks/cursor-hooks.json` (event `afterShellExecution`, command
+  `${CURSOR_PLUGIN_ROOT}/hooks/push-reminder-cursor.sh`) wired via the
+  `.cursor-plugin/plugin.json` `hooks` field. The script self-filters on
+  `git push` and honours `ANCHOR_NO_REMIND`. **Caveat:** Cursor does not publish
+  the hook stdin shape or how it surfaces hook stdout, so the reminder is emitted
+  as plain text on a best-effort basis and is **not yet runtime-verified** (🟡) —
+  the wiring follows the documented schema, but confirm on a live Cursor install.
 - **Gemini** — *does* auto-discover the root file (*"Define hooks in a
   `hooks/hooks.json` file … hooks are not defined in the `gemini-extension.json`
-  manifest"*) but uses `${extensionPath}` (not `${CLAUDE_PLUGIN_ROOT}`) and a
-  different event vocabulary, so the discovered Claude-format hook **will not
-  resolve** — a dead/no-op hook (marked ✗). A faithful reminder on Gemini would
-  need a Gemini-native `hooks/hooks.json`, which is not shipped here.
+  manifest"*), which means it can't be pointed at a Gemini-specific file, and it
+  uses `AfterTool`/`BeforeTool` events (not `PostToolUse`) plus a path variable
+  and output protocol that the reference page does **not** publish for hooks. So
+  the shared Claude-format file is discovered but dead (✗), and a Gemini-native
+  hook can't be authored faithfully from the docs (it would collide with the
+  Claude file at the same path, and its command path-var + context-injection
+  format are unknown). Not shipped; Gemini stays skill-only.
 
 ## Known caveat: locating the bundled CLI on non-Claude harnesses
 

@@ -42,7 +42,7 @@ what the manifest declares.
 | **Claude Code** | `.claude-plugin/plugin.json` | ✅ | ✅ | ✅ |
 | **GitHub Copilot CLI** | *(none — reads `.claude-plugin/plugin.json` fallback)* | ✅ | ✅¹ | ⚠️ unverified² |
 | **OpenAI Codex** | `.codex-plugin/plugin.json` | ✅ | ➖³ | ✅⁴ |
-| **Cursor** | `.cursor-plugin/plugin.json` | ✅ | ✅ | ➖⁵ |
+| **Cursor** | `.cursor-plugin/plugin.json` | ✅ | ✅ | 🟡 native⁵ |
 | **Gemini CLI** | `gemini-extension.json` | ✅ | ➖⁶ | ❌⁶ |
 
 ¹ Copilot's `commands` field has no default path, so the canonical manifest now
@@ -52,11 +52,17 @@ the page doesn't document a compat alias — so hook behaviour is unverified.
 ³ `commands` isn't a documented field in the Codex plugin manifest.
 ⁴ Codex auto-discovers `hooks/hooks.json` and sets `CLAUDE_PLUGIN_ROOT` for
 Claude-hook compatibility, so the hook is expected to run.
-⁵ Cursor's hook schema differs (camelCase events, `${CURSOR_PLUGIN_ROOT}`); the
-manifest deliberately leaves `hooks` unset so the incompatible file isn't wired.
-⁶ Gemini commands are TOML (not our markdown) and its hooks use `${extensionPath}`
-/ different events, so neither the command nor the Claude-format hook works there
-— Gemini is **skill-only**. See `docs/portability.md`.
+⁵ Ships a **Cursor-native** hook (`hooks/cursor-hooks.json`,
+`hooks/push-reminder-cursor.sh`): `afterShellExecution` event +
+`${CURSOR_PLUGIN_ROOT}`, wired via the manifest `hooks` field. Built to Cursor's
+documented hook schema; Cursor doesn't publish the hook stdin/stdout protocol, so
+whether the reminder text surfaces is **not yet runtime-verified** (🟡).
+⁶ Gemini commands are TOML (not our markdown) and its hooks live in a root
+`hooks/hooks.json` it can't be pointed away from, using `AfterTool` events — the
+shared Claude-format file is discovered but dead there. No Gemini-native hook is
+shipped because Gemini publishes neither the hook path-variable nor the
+output/context-injection protocol. Gemini is **skill-only**. See
+`docs/portability.md`.
 
 Docs: [Claude](https://code.claude.com/docs/en/plugins-reference) ·
 [Copilot](https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-plugin-reference) ·
@@ -123,7 +129,8 @@ An optional per-repo git push reminder is also available:
 | `docs/portability.md` | cross-harness mapping + caveats |
 | `skills/anchor-review/SKILL.md` | the review + init workflows the agent follows (the portable core) |
 | `commands/anchor.md` | the `/anchor` slash command |
-| `hooks/hooks.json`, `hooks/post-push-reminder.sh` | PostToolUse push reminder |
+| `hooks/hooks.json`, `hooks/post-push-reminder.sh` | Claude/Codex PostToolUse push reminder |
+| `hooks/cursor-hooks.json`, `hooks/push-reminder-cursor.sh` | Cursor-native (`afterShellExecution`) push reminder |
 | `bin/anchor.mjs`, `lib/` | deterministic scripts (source) |
 | `dist/anchor.mjs` | committed single-file bundle the skill invokes |
 | `.anchor/` (in *your* repo, gitignored) | config, learnings, codebase map, archived reviews |

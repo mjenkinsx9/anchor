@@ -43,13 +43,25 @@ describe('cross-harness manifest metadata', () => {
     expect(read('.codex-plugin/plugin.json').skills).toBe('./skills/');
   });
 
-  it('Cursor manifest points skills/commands at the shared dirs and does not wire the Claude-format hooks', () => {
+  it('Cursor manifest points skills/commands at the shared dirs and uses the Cursor-native hook file', () => {
     const m = read('.cursor-plugin/plugin.json');
     expect(m.skills).toBe('./skills/');
     expect(m.commands).toBe('./commands/');
-    // Cursor's hook schema (camelCase events, no ${CLAUDE_PLUGIN_ROOT}) is
-    // incompatible with our Claude-format hooks/hooks.json — must stay unset.
-    expect(m.hooks).toBeUndefined();
+    // Cursor's hook schema (camelCase events, ${CURSOR_PLUGIN_ROOT}) is
+    // incompatible with the Claude-format hooks/hooks.json, so it must point at
+    // its own native file, never the shared Claude one.
+    expect(m.hooks).toBe('./hooks/cursor-hooks.json');
+    expect(m.hooks).not.toBe('./hooks/hooks.json');
+  });
+
+  it('the Cursor-native hook is in Cursor format (camelCase event, ${CURSOR_PLUGIN_ROOT})', () => {
+    const h = read('hooks/cursor-hooks.json');
+    expect(Object.keys(h.hooks)).toContain('afterShellExecution');
+    // Must not leak Claude-format event names or the Claude plugin-root var.
+    expect(h.hooks.PostToolUse).toBeUndefined();
+    const serialized = JSON.stringify(h);
+    expect(serialized).toContain('${CURSOR_PLUGIN_ROOT}');
+    expect(serialized).not.toContain('CLAUDE_PLUGIN_ROOT');
   });
 
   it('the referenced shared directories actually exist', () => {
