@@ -59,6 +59,23 @@ describe('anchor rules', () => {
   });
 });
 
+describe('anchor context --staged', () => {
+  it('resolves staged changes (not only --from-diff)', () => {
+    const r2 = makeFixtureRepo({
+      'src/util.ts': 'export const x = 1;\n',
+      'src/consumer.ts': "import { x } from './util';\nexport const y = x;\n",
+    });
+    try {
+      writeFileSync(join(r2.dir, 'src/consumer.ts'), "import { x } from './util';\nexport const y = x + 1;\n");
+      r2.git('add', 'src/consumer.ts');
+      const r = anchor(['context', '--staged'], r2.dir);
+      expect(r.status).toBe(0);
+      // staged change to consumer.ts → its importee util.ts is found (was empty before the fix)
+      expect(JSON.parse(r.stdout).files.map((f) => f.path)).toContain('src/util.ts');
+    } finally { r2.cleanup(); }
+  });
+});
+
 describe('anchor learn list --from-diff (scoped)', () => {
   it('returns only learnings whose scope matches the changed files', () => {
     anchor(['learn', 'add', 'DB pattern', '--reason', 'x', '--scope', 'src/db/**']);

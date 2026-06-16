@@ -5511,14 +5511,7 @@ var HANDLERS = {
     requireRepo();
     const config = loadCfg();
     const maxFiles = Number(flags.get("max-files") ?? 50);
-    let files;
-    if (flags.has("from-diff")) {
-      const fd = flags.get("from-diff");
-      const targetTokens = typeof fd === "string" ? [fd, ...positional] : positional;
-      files = getDiff(targetTokens, { cwd: process.cwd() }).files.map((f) => f.path);
-    } else {
-      files = positional;
-    }
+    const files = flags.has("from-diff") || flags.has("staged") ? getDiff(diffTargetTokens(positional, flags), { cwd: process.cwd() }).files.map((f) => f.path) : positional;
     emit(getContext({ files, repoDir: process.cwd(), maxFiles, ignore: config.ignore }), flags);
   },
   async analyze(positional, flags) {
