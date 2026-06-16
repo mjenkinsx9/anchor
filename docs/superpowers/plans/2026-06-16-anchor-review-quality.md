@@ -17,8 +17,12 @@
 - **Bundle refresh:** `bin/anchor.mjs` prefers `lib/` but ships `dist/anchor.mjs`, and `tests/integration/bundle.test.mjs` asserts the bundle is fresh. **Any task that edits a `lib/*.mjs` file MUST end with `npm run bundle` and stage `dist/anchor.mjs`.**
 - **Test commands:** `npm test` (unit), `npm run test:integration`, `npm run test:golden`, `npm run typecheck`, `npm run eval`.
 - **Eval gate (the meta point):** before starting a phase, run `npm run eval` (with reviews generated, see Phase M) and record the baseline. After the phase, re-run: **recall must not drop and false-positives must not rise.** A phase that regresses either is not done.
+- **Eval-gate reality (be honest about what gates what):** `tests/eval/run.mjs` only *scores* when `ANCHOR_EVAL_GENERATE=1` AND the `claude` CLI is installed and authenticated; otherwise it writes prompts and exits 0 **without scoring** (`scored.length === 0`). So in any automated/CI/subagent context without a live model, the LLM eval is a no-op. The **binding** acceptance gate for those contexts is the deterministic suite — `npm test`, `npm run test:integration`, `npm run test:golden`, `npm run typecheck`, plus the scorer's own unit tests (`tests/unit/eval.test.mjs`). Treat the LLM eval as a *manual/optional* quality gate run by a human with a model, not a blocker that silently passes.
 - **Config back-compat:** every new config key has a default in `lib/config.mjs` `DEFAULTS` and is documented in `templates/config.yaml`. Unknown/invalid values warn (don't throw) and fall back to default, matching the existing `loadConfig` pattern.
 - **SKILL changes are not bundled** (the skill ships as a markdown file), but they DO ship in the plugin — bump nothing, just edit `skills/anchor-review/SKILL.md`.
+- **Shared-file sequencing (critical for parallel execution):** `lib/cli.mjs`, `lib/config.mjs`, `skills/anchor-review/SKILL.md`, `templates/config.yaml`, and `dist/anchor.mjs` are touched by *many* tasks. These must be edited **sequentially, one task at a time** — never by parallel agents/worktrees, or the edits clobber each other and the bundle races. What *is* safe to parallelize: creating the standalone new modules (`lib/analyzers.mjs`, `lib/rules.mjs`, `lib/refs.mjs`, `lib/manifest.mjs`) and their *unit* tests, since each is a disjoint new file. Build those in parallel, then do all `cli.mjs`/`config.mjs`/`SKILL.md` wiring + the single `npm run bundle` centrally and sequentially.
+- **Hard dependency order:** Phase 1 (esp. **1.3 timeout** — 2A's analyzers pass `defaultTimeout`) lands before Phase 2. Within Phase 2: **2C (`refs`) before 4A** (4A reuses `findRefs`). The shared `anchor config` effective-config step (below) lands before 3A/3D rely on it.
+- **Effective-config bridge (resolves a recurring gap):** the SKILL reads raw `.anchor/config.yaml` with the Read tool, so it never sees *merged defaults* for keys the user omitted (e.g. `protected_categories`, `strictness`, `categories`). Fix once: SKILL **Step 2 also runs `anchor config --format json`** to get the effective merged config and uses *those* values for category-gating (3D), protected categories (3A), `min_severity`/`min_confidence`/`max_findings` filtering, and rules-presence. Document this in SKILL Step 2; tasks 3A/3D/2B reference it instead of re-inventing a config-passing mechanism.
 
 ---
 
@@ -115,10 +119,12 @@ git add lib/diff.mjs lib/cli.mjs tests/unit/diff.test.mjs dist/anchor.mjs
 git commit -m "fix: non-numeric diff budget flag falls back to config, not unlimited"
 ```
 
-### Task 1.2: Validate `min_severity`, `output.color`, and category membership
+### Task 1.2: Config hardening — validate enums, bound numerics, fix `ensureGitignore`
+
+Covers three real defects the deep review found in `config.mjs`: (a) no membership/enum validation for `min_severity`, `output.color`, categories; (b) no bounds on numeric keys, so `max_files: 0` / `min_confidence: 99` pass silently; (c) `ensureGitignore` uses an exact-string `Set` membership test, so a `.gitignore` line with trailing whitespace defeats dedup and the block is appended repeatedly (idempotency bug).
 
 **Files:**
-- Modify: `lib/config.mjs` (`loadConfig`)
+- Modify: `lib/config.mjs` (`loadConfig` + `ensureGitignore`)
 - Test: `tests/unit/config.test.mjs`
 
 - [ ] **Step 1: Write the failing tests** (append to the `loadConfig` describe)
@@ -167,11 +173,35 @@ if (Array.isArray(raw.categories)) {
     raw.categories = raw.categories.filter((c) => CATEGORIES.includes(c));
   }
 }
+if (raw.output !== undefined && (typeof raw.output !== 'object' || Array.isArray(raw.output))) {
+  warnings.push(`anchor: output must be a mapping. Got ${JSON.stringify(raw.output)}. Using defaults.`);
+  delete raw.output;
+}
 if (raw.output && typeof raw.output === 'object' && raw.output.color !== undefined && !COLORS.includes(raw.output.color)) {
   warnings.push(`anchor: output.color must be one of ${COLORS.join(', ')}. Got ${JSON.stringify(raw.output.color)}. Using auto.`);
   delete raw.output.color;
 }
 ```
+
+**Numeric bounds** (run this *after* the existing `Number.isInteger` loop — those already drop non-integers; this drops out-of-range integers). Append to the same `loadConfig` validation region:
+
+```js
+const BOUNDS = { max_findings: [1, Infinity], min_confidence: [0, 5], max_diff_lines: [1, Infinity], max_files: [1, Infinity] };
+for (const [key, [lo, hi]] of Object.entries(BOUNDS)) {
+  if (Number.isInteger(raw[key]) && (raw[key] < lo || raw[key] > hi)) {
+    warnings.push(`anchor: ${key} must be between ${lo} and ${hi}. Got ${raw[key]}. Using ${DEFAULTS[key]}.`);
+    delete raw[key];
+  }
+}
+```
+
+- [ ] **Step 3b: Fix `ensureGitignore` idempotency** — normalize lines before the membership test so trailing whitespace can't defeat dedup:
+
+```js
+const lines = new Set(existing.split('\n').map((l) => l.trim()));
+```
+
+Add a test: write a `.gitignore` containing `'.anchor/config.yaml   \n'` (trailing spaces), call `ensureGitignore` twice, assert the block isn't duplicated.
 
 - [ ] **Step 4: Run to verify pass**
 
@@ -209,7 +239,9 @@ it('applies a default timeout when none is passed', () => {
 Run: `npx vitest run tests/unit/git.test.mjs`
 Expected: FAIL — no `defaultTimeout` honored; the call blocks ~5s.
 
-- [ ] **Step 3: Implement** — honor an explicit timeout, else a default; keep existing callers working
+- [ ] **Step 3: Implement** — honor an explicit timeout, else a default; keep existing callers working.
+
+> **Verify, don't assume:** Node's `spawnSync` timeout behavior across versions sets *both* `res.error` (an `Error` whose `.code` is `'ETIMEDOUT'`) **and** `res.signal` (`'SIGTERM'`). Detect the timeout robustly via *either* signal. Confirm empirically once with `node -e "const {spawnSync}=require('child_process');const r=spawnSync('sh',['-c','sleep 5'],{timeout:200});console.log(JSON.stringify({err:r.error&&r.error.code,sig:r.signal,status:r.status}))"` before finalizing. Missing-binary (`ENOENT`) must still return 127 (existing test `tests/unit/git.test.mjs` asserts this).
 
 ```js
 export function runCmd(cmd, args, opts = {}) {
@@ -220,13 +252,33 @@ export function runCmd(cmd, args, opts = {}) {
     maxBuffer: 64 * 1024 * 1024,
     timeout: opts.timeout ?? opts.defaultTimeout ?? 30_000,
   });
+  const timedOut = res.error?.code === 'ETIMEDOUT' || (res.error == null && res.signal != null && res.status == null);
+  if (timedOut) {
+    return { stdout: res.stdout ?? '', stderr: `anchor: command timed out: ${cmd}`, code: 124 }; // 124 = GNU timeout convention
+  }
   if (res.error) {
-    const killed = res.error.code === 'ETIMEDOUT';
-    return { stdout: res.stdout ?? '', stderr: killed ? `command timed out: ${cmd}` : String(res.error.message), code: 127 };
+    return { stdout: '', stderr: String(res.error.message), code: 127 }; // missing binary etc.
   }
   return { stdout: res.stdout ?? '', stderr: res.stderr ?? '', code: res.status ?? (res.signal ? 128 : 0) };
 }
 ```
+
+Revise the **Step 1 test** to assert the *behavior* (killed, distinct code) rather than only wall-clock, which can flake under load:
+
+```js
+it('applies a default timeout and reports a clean timeout code/message', () => {
+  const start = Date.now();
+  const r = runCmd('sh', ['-c', 'sleep 5'], { defaultTimeout: 200 });
+  expect(Date.now() - start).toBeLessThan(3000); // killed well before 5s
+  expect(r.code).toBe(124);
+  expect(r.stderr).toMatch(/timed out/);
+});
+it('still returns 127 for a missing binary (not 124)', () => {
+  expect(runCmd('definitely-not-a-real-binary-xyz', []).code).toBe(127);
+});
+```
+
+- [ ] **Step 3b: Give long-running external calls a generous explicit timeout** so the new 30s default never truncates a legitimately slow fetch. In `lib/diff.mjs` `prMode`, pass `{ cwd, env, timeout: 120_000 }` to the `gh pr diff` / `gh pr view` `runCmd` calls. (The eval harness spawns `claude -p` via `spawnSync` directly, **not** through `runCmd`, so it is unaffected — note this in a comment.)
 
 - [ ] **Step 4: Run to verify pass + full unit suite** (ensure the 30s default doesn't break fast tests)
 
@@ -370,6 +422,76 @@ git add docs/superpowers/specs/2026-06-09-anchor-design.md
 git commit -m "docs: note that the diff hard-fail behavior was superseded"
 ```
 
+### Task 1.7: Harden `parseUnifiedDiff` against truncated/malformed hunks
+
+The deep review found a real state-machine bug: if a hunk header declares more lines than the body actually contains (truncated diff — e.g. a `gh pr diff` cut off, or a malformed paste), `remOld`/`remNew` never reach zero, so the **next file's `diff --git` line is absorbed into the previous hunk's body** and that whole subsequent file is silently lost. Git's own output is well-formed, but Anchor ingests `gh` output and pasted/file-mode diffs, so this is reachable. The fix: recognize a new section header even while a hunk is "hungry".
+
+**Files:**
+- Modify: `lib/diff.mjs` (`parseUnifiedDiff`)
+- Test: `tests/unit/diff.test.mjs`
+
+- [ ] **Step 1: Failing test** — a truncated first hunk followed by a second file; assert BOTH files parse:
+
+```js
+it('does not swallow the next file when a hunk is truncated', () => {
+  const diff = [
+    'diff --git a/a.ts b/a.ts',
+    '--- a/a.ts',
+    '+++ b/a.ts',
+    '@@ -1,5 +1,5 @@',   // claims 5 lines…
+    ' one',
+    '+two',             // …but only 2 body lines provided (truncated)
+    'diff --git a/b.ts b/b.ts',
+    '--- a/b.ts',
+    '+++ b/b.ts',
+    '@@ -1 +1 @@',
+    '-x',
+    '+y',
+    '',
+  ].join('\n');
+  const files = parseUnifiedDiff(diff);
+  expect(files.map((f) => f.path)).toEqual(['a.ts', 'b.ts']); // currently returns ['a.ts'] only
+});
+```
+
+- [ ] **Step 2: Run to verify failure** — current parser returns only `a.ts`; `b.ts` was absorbed into `a.ts`'s hunk body.
+
+- [ ] **Step 3: Implement** — in the hunk-consumption branch (top of the per-line loop), bail out of consumption when the line begins a **new file section** so the normal header logic runs. Guard on `diff --git ` ONLY:
+
+```js
+for (const line of text.split('\n')) {
+  // A new file section starts with an UNPREFIXED `diff --git `. Body content lines are
+  // always prefixed (+/-/space), so a content line can never bare-start with `diff --git `.
+  // (Do NOT also test `--- `/`+++ ` here: a removed content line like `-- x` renders as
+  // `--- x`, which would misfire. Real `---`/`+++` headers only ever follow `diff --git`,
+  // and by then flush() has already reset the hunk state.)
+  if (hunk && (remOld > 0 || remNew > 0) && !line.startsWith('diff --git ')) {
+    if (line.startsWith('\\')) continue; // "\ No newline at end of file"
+    hunk.body += line + '\n';
+    const c = line[0];
+    if (c === '+') { remNew--; file.added++; }
+    else if (c === '-') { remOld--; file.removed++; }
+    else { remOld--; remNew--; }
+    continue;
+  }
+  // …existing `diff --git` / `---` / `+++` / `@@` handling unchanged…
+}
+```
+
+The existing "does not mistake body lines starting with --- or +++ for headers" test stays green (those lines don't start with `diff --git `, and for well-formed hunks `remOld/remNew` are consumed exactly so we never reach the next `diff --git` mid-hunk anyway). Verify it still passes.
+
+- [ ] **Step 4: Run unit suite + bundle**
+
+Run: `npx vitest run tests/unit/diff.test.mjs && npm run bundle`
+Expected: PASS (all existing diff tests + the new one).
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add lib/diff.mjs tests/unit/diff.test.mjs dist/anchor.mjs
+git commit -m "fix: parseUnifiedDiff no longer swallows the next file on a truncated hunk"
+```
+
 ---
 
 ## Phase 2 — The Big 3 (highest review-quality leverage)
@@ -384,7 +506,14 @@ Run installed analyzers scoped to changed files and feed normalized, *grounded* 
 - Modify: `skills/anchor-review/SKILL.md` (new Step 3d — run `anchor analyze`)
 - Test: `tests/unit/analyzers.test.mjs`, `tests/integration/analyze.test.mjs`
 
-**Design.** A registry of analyzers, each: `{ name, bin, detect(repoDir), languages(exts), command(files), parse(stdout, stderr) -> Finding[] }`. `Finding = { tool, file, line, rule, severity, message }`. `analyze(repoDir, changedFiles)` runs only analyzers whose `bin` exists (via `hasCmd`) AND that match at least one changed file's extension, scoped to those files, and returns `{ tools: [{name, ran, fileCount}], findings: Finding[] }`. Never throws — a failing analyzer is recorded as `ran:false` with its stderr.
+**Design.** A registry of analyzers, each: `{ name, bin, exts, command(files), parse(stdout, stderr) -> Finding[] }`. `Finding = { tool, file, line, rule, severity, message, changed }`. `analyze(repoDir, changedFiles)` runs only analyzers that (a) match at least one changed file's extension AND (b) have a resolvable binary, scoped to those files, and returns `{ tools: [{name, ran, fileCount, reason?}], findings: Finding[], truncated? }`. Never throws — a failing/missing analyzer is recorded as `ran:false` with a `reason`.
+
+Four things the deep review proved are load-bearing for this to be *useful*, not just present:
+
+1. **Local-binary resolution (the headline fix).** `eslint`/`tsc`/`prettier` are almost always project-local devDeps, not global. `hasCmd('tsc')` (global PATH `--version`) returns false on most real JS/TS repos, so analyzers would silently never fire. Add `resolveBin(repoDir, bin)` that prefers `<repoDir>/node_modules/.bin/<bin>` (also `.cmd` on Windows) and falls back to a global `hasCmd(bin)` check; run the resolved absolute path.
+2. **Repo-relative path normalization.** `eslint --format json` emits **absolute** `filePath`; `ruff`/`tsc` vary. Normalize every finding's `file` to repo-relative (strip a leading `repoDir + sep`) so it dedups/attributes against the diff (whose paths are repo-relative).
+3. **`changed` tagging + cap instead of flooding.** `tsc --noEmit` is whole-project (passing files to `tsc` disables `tsconfig.json` — a known gotcha — so we deliberately do NOT pass files to tsc), so on a repo with pre-existing errors it would flood the review. Tag each finding `changed: <file ∈ changedSet>`; cap total findings (e.g. 200) and set `truncated: true` if exceeded. The SKILL prioritizes `changed: true` findings and treats the rest as ambient context. (This preserves the valuable "your signature change broke an unchanged caller" signal — that finding has `changed: false` but is still surfaced — without drowning the review.)
+4. **Consistent `tools[]` shape.** Every entry is `{ name, ran, fileCount, reason? }`; skipped tools are `{ name, ran: false, fileCount: 0, reason: 'not installed' }`.
 
 - [ ] **Step 1: Write the failing unit test** for the pure parser + selection logic (no external bins needed — inject a fake analyzer)
 
@@ -414,10 +543,26 @@ it('runAnalyzers normalizes findings and records which tools ran', async () => {
 - [ ] **Step 3: Implement `lib/analyzers.mjs`** (real built-in registry + injectable `exec` for tests)
 
 ```js
-import { extname } from 'node:path';
+import { extname, join, isAbsolute, relative, sep } from 'node:path';
+import { existsSync } from 'node:fs';
 import { runCmd, hasCmd } from './git.mjs';
 
-/** Built-in analyzers. Each runs only if its bin exists and a changed file matches `exts`. */
+const MAX_FINDINGS = 200;
+
+/**
+ * Resolve a tool binary: prefer the project-local node_modules/.bin (the common
+ * case — eslint/tsc are devDeps), else fall back to a global PATH binary.
+ * Returns an absolute path or a bare command name, or null if unresolved.
+ */
+export function resolveBin(repoDir, bin) {
+  for (const name of [bin, `${bin}.cmd`]) {
+    const local = join(repoDir, 'node_modules', '.bin', name);
+    if (existsSync(local)) return local;
+  }
+  return hasCmd(bin) ? bin : null;
+}
+
+/** Built-in analyzers. tsc is whole-project (passing files disables tsconfig). */
 export const ANALYZERS = [
   { name: 'tsc', bin: 'tsc', exts: ['.ts', '.tsx'],
     command: () => ['--noEmit', '--pretty', 'false'],
@@ -439,25 +584,42 @@ export function selectAnalyzers(registry, files) {
   return registry.filter((a) => a.exts.some((e) => exts.has(e)));
 }
 
-export async function runAnalyzers(registry, { repoDir, files, exec }) {
-  const run = exec ?? ((cmd, args) => Promise.resolve(runCmd(cmd, args, { cwd: repoDir, defaultTimeout: 60_000 })));
+/** Normalize an analyzer-reported path to repo-relative (eslint emits absolute). */
+function toRepoRel(repoDir, file) {
+  if (!file) return file;
+  const rel = isAbsolute(file) ? relative(repoDir, file) : file.replace(/^\.\//, '');
+  return rel.split(sep).join('/');
+}
+
+export async function runAnalyzers(registry, { repoDir, files, exec, resolve = resolveBin }) {
+  const run = exec ?? ((bin, args) => Promise.resolve(runCmd(bin, args, { cwd: repoDir, defaultTimeout: 60_000 })));
+  const changedSet = new Set(files.map((f) => f.replace(/^\.\//, '')));
   const selected = selectAnalyzers(registry, files);
   const tools = [];
   const findings = [];
   for (const a of selected) {
     const matched = files.filter((f) => a.exts.includes(extname(f)));
-    if (!exec && !hasCmd(a.bin)) { tools.push({ name: a.name, ran: false, reason: 'not installed' }); continue; }
-    const r = await run(a.bin, a.command(matched));
+    const bin = exec ? a.bin : resolve(repoDir, a.bin);
+    if (!bin) { tools.push({ name: a.name, ran: false, fileCount: 0, reason: 'not installed' }); continue; }
+    const r = await run(bin, a.command(matched));
     tools.push({ name: a.name, ran: true, fileCount: matched.length });
-    for (const finding of a.parse(r.stdout, r.stderr)) findings.push({ tool: a.name, ...finding });
+    for (const f of a.parse(r.stdout ?? '', r.stderr ?? '')) {
+      const file = toRepoRel(repoDir, f.file);
+      findings.push({ tool: a.name, ...f, file, changed: changedSet.has(file) });
+    }
   }
-  return { tools, findings };
+  // Changed-file findings first; cap to bound prompt size.
+  findings.sort((x, y) => Number(y.changed) - Number(x.changed));
+  const truncated = findings.length > MAX_FINDINGS;
+  return { tools, findings: findings.slice(0, MAX_FINDINGS), ...(truncated ? { truncated: true } : {}) };
 }
 
 export async function analyze(repoDir, files) {
   return runAnalyzers(ANALYZERS, { repoDir, files });
 }
 ```
+
+> **Unit test note:** the injected-`exec` path bypasses `resolveBin` (so tests need no real binary). Add a test that `resolveBin` prefers a fake `node_modules/.bin/<bin>` file in a fixture dir over the global lookup, and that findings get `changed: true/false` and absolute paths normalized to repo-relative.
 
 - [ ] **Step 4: Add the `analyze` handler to `lib/cli.mjs`** (mirrors `context` — derives changed files from `--from-diff` or positionals)
 
@@ -473,21 +635,70 @@ async analyze(positional, flags) {
   emit(await analyze(process.cwd(), files), flags);
 },
 ```
-(Also add `analyze` to the `USAGE` string and make `main` await async handlers: change `handler(...)` to `await handler(...)` and `main`/its caller to async — verify existing sync handlers still work.)
+**Make the dispatch async (explicit — this is the part 2A can't skip).** `analyze` is the first async handler; `main()` is currently sync. Convert `main` to `async` and `await` the handler. Existing sync handlers are unaffected (`await` on a non-promise is a no-op), and the try/catch still catches their throws because the `await` is inside it:
+
+```js
+export async function main() {
+  const [sub, ...rest] = process.argv.slice(2);
+  const { positional, flags } = parseArgs(rest);
+  const handler = HANDLERS[sub];
+  if (!handler) { process.stderr.write(USAGE + '\n'); process.exitCode = 1; return; }
+  try {
+    await handler(positional, flags, rest);
+  } catch (e) {
+    process.stderr.write((e?.message ?? String(e)) + '\n');
+    process.exitCode = 1;
+  }
+}
+// the bottom `if (isMain) main();` stays — a floating promise is fine here because
+// errors are caught inside main() and the event loop drains before exit.
+```
+
+Add `analyze` to the `USAGE` string. **Add an integration/CLI test** asserting a previously-sync handler (e.g. `anchor config --format json`) still prints valid JSON and exits 0 through the now-async dispatch (the existing `cli.test.mjs` already covers most handlers — confirm it stays green).
 
 - [ ] **Step 5: Write the integration test** (`tests/integration/analyze.test.mjs`) using a real installed bin — gate on availability so CI without the tool still passes
 
+Prefer a **deterministic** integration test that plants a fake executable in the fixture's `node_modules/.bin` (proves `resolveBin` + scoping + normalization end-to-end without depending on a globally-installed tool), plus a gated real-tool test:
+
 ```js
 import { describe, it, expect } from 'vitest';
-import { spawnSync } from 'node:child_process';
-import { hasCmd } from '../../lib/git.mjs';
-// build a fixture with a .ts type error; assert `anchor analyze` reports a tsc finding IF tsc is present
-const tscAvailable = hasCmd('tsc');
-describe.skipIf(!tscAvailable)('anchor analyze', () => {
-  it('reports analyzer findings for changed files', () => { /* fixture + assert findings[].tool === 'tsc' */ });
+import { writeFileSync, mkdirSync, chmodSync } from 'node:fs';
+import { join } from 'node:path';
+import { makeFixtureRepo } from '../helpers/fixture.mjs';
+import { runAnalyzers } from '../../lib/analyzers.mjs';
+
+it('resolves a project-local bin and scopes/normalizes findings', async () => {
+  const repo = makeFixtureRepo({ 'src/a.ts': 'export const x = 1;\n' });
+  try {
+    const bin = join(repo.dir, 'node_modules', '.bin');
+    mkdirSync(bin, { recursive: true });
+    const fake = join(bin, 'eslint');
+    // emit one eslint-shaped JSON finding with an ABSOLUTE path
+    writeFileSync(fake, `#!/bin/sh\ncat <<'JSON'\n[{"filePath":"${repo.dir}/src/a.ts","messages":[{"ruleId":"no-x","line":1,"severity":2,"message":"bad"}]}]\nJSON\n`);
+    chmodSync(fake, 0o755);
+    const out = await runAnalyzers(
+      [{ name: 'eslint', bin: 'eslint', exts: ['.ts'], command: () => [], parse: (o) => { try { return JSON.parse(o).flatMap((f) => f.messages.map((m) => ({ rule: m.ruleId, file: f.filePath, line: m.line, severity: 'high', message: m.message }))); } catch { return []; } } }],
+      { repoDir: repo.dir, files: ['src/a.ts'] },
+    );
+    expect(out.tools[0]).toMatchObject({ name: 'eslint', ran: true, fileCount: 1 });
+    expect(out.findings[0]).toMatchObject({ tool: 'eslint', file: 'src/a.ts', changed: true }); // absolute → repo-relative
+  } finally { repo.cleanup(); }
 });
-it('analyze emits empty findings when no analyzer matches', () => { /* fixture with only .md changes → tools: [], findings: [] */ });
+
+it('records a missing analyzer as ran:false, never throws', async () => {
+  const repo = makeFixtureRepo({ 'src/a.ts': 'export const x = 1;\n' });
+  try {
+    const out = await runAnalyzers(
+      [{ name: 'ghost', bin: 'definitely-not-real-xyz', exts: ['.ts'], command: () => [], parse: () => [] }],
+      { repoDir: repo.dir, files: ['src/a.ts'] },
+    );
+    expect(out.tools[0]).toMatchObject({ name: 'ghost', ran: false, reason: 'not installed' });
+    expect(out.findings).toEqual([]);
+  } finally { repo.cleanup(); }
+});
 ```
+
+Also keep one `describe.skipIf(!hasCmd('tsc'))` smoke test for a real installed `tsc`, and a CLI-level test that `anchor analyze` over a `.md`-only change yields `findings: []`.
 
 - [ ] **Step 6: Wire SKILL.md** — add **Step 3d — Static analyzer findings**:
 
@@ -496,9 +707,13 @@ it('analyze emits empty findings when no analyzer matches', () => { /* fixture w
 Run `anchor analyze --from-diff <target>` and parse the JSON. Treat
 `findings[]` as GROUND TRUTH (a real parser/linter produced them): do not
 re-derive or second-guess them, fold them into your review (dedup against your
-own findings), and attribute them to the tool. List which tools ran (and which
-were skipped as not-installed) in the "Context used" footer. If `tools` is
-empty, note that no analyzers were available and rely on reasoning.
+own findings), and attribute them to the tool. **Prioritize findings with
+`changed: true` (they touch the diff); a `changed: false` finding is ambient
+project noise UNLESS it is plausibly caused by this change (e.g. a signature
+change breaking an unchanged caller) — surface those, drop the rest.** If
+`truncated: true`, say so. List which tools ran (and which were skipped as
+not-installed) in the "Context used" footer. If `tools` is empty, note that no
+analyzers were available and rely on reasoning.
 ```
 
 - [ ] **Step 7: Run everything + bundle**
@@ -572,12 +787,22 @@ export function gatherRules({ repoDir, configRules, changedPaths }) {
 ```js
 // in DEFAULTS:
 rules: [],
-// validation: each rule needs a string `rule`; drop malformed entries with a warning
+// validation: each rule needs a string `rule` AND (if present) a compilable scope glob.
+// An invalid scope would throw inside selectRules' Minimatch and crash the whole review.
 if (raw.rules !== undefined) {
   if (!Array.isArray(raw.rules)) { warnings.push('anchor: rules must be a list. Ignoring.'); delete raw.rules; }
-  else raw.rules = raw.rules.filter((r) => r && typeof r.rule === 'string');
+  else raw.rules = raw.rules.filter((r) => {
+    if (!r || typeof r.rule !== 'string') return false;
+    if (r.scope !== undefined) {
+      try { new Minimatch(r.scope, { dot: true }); }
+      catch { warnings.push(`anchor: rule ${JSON.stringify(r.id ?? r.rule)} has an invalid scope glob ${JSON.stringify(r.scope)}. Dropping it.`); return false; }
+    }
+    return true;
+  });
 }
 ```
+
+(`import { Minimatch } from 'minimatch';` at the top of `config.mjs`, matching `ignore.mjs`.) Also make `selectRules` defensive — wrap its `new Minimatch(...)` in a try/catch that treats an uncompilable scope as "no match" — so a hand-written `.anchor` rule that bypassed config validation still can't crash a review.
 
 - [ ] **Step 5: Add the `rules` handler to `lib/cli.mjs`**
 
@@ -634,12 +859,34 @@ Give the reviewer a cheap find-references/definition lookup so the verification 
 
 **Design.** `findRefs(repoDir, symbol, { exts })` runs `git grep -n -w -E <symbol>` over code globs, returns `{ symbol, references: [{ file, line, text }], count }`. Escapes the symbol (reuse `escapeRe` pattern). Pure-ish; integration test exercises real `git grep`.
 
-- [ ] **Step 1: Failing integration test** (`tests/integration/refs.test.mjs`) — fixture repo, assert `anchor refs <symbol>` finds the call site
+- [ ] **Step 1: Failing integration test** (`tests/integration/refs.test.mjs`) — real fixture repo, assert `findRefs` finds both the definition and the call site:
 
 ```js
-// fixture: src/a.ts defines `helper`, src/b.ts calls `helper`
-// run: anchor refs helper  → references include src/b.ts, count >= 2
+import { describe, it, expect, afterAll } from 'vitest';
+import { findRefs } from '../../lib/refs.mjs';
+import { makeFixtureRepo } from '../helpers/fixture.mjs';
+
+const repo = makeFixtureRepo({
+  'src/a.ts': 'export function helper() { return 1; }\n',
+  'src/b.ts': "import { helper } from './a';\nexport const y = helper();\n",
+});
+afterAll(() => repo.cleanup());
+
+it('finds definition and call sites of a symbol', () => {
+  const r = findRefs(repo.dir, 'helper');
+  expect(r.symbol).toBe('helper');
+  expect(r.references.map((x) => x.file)).toEqual(expect.arrayContaining(['src/a.ts', 'src/b.ts']));
+  expect(r.count).toBeGreaterThanOrEqual(2);
+});
+it('rejects a non-identifier symbol', () => {
+  expect(() => findRefs(repo.dir, 'a.b()')).toThrow(/valid identifier/);
+});
+it('empty result for an unknown symbol (no throw)', () => {
+  expect(findRefs(repo.dir, 'noSuchSymbolXyz').count).toBe(0);
+});
 ```
+
+> **Limitation to document** (in the JSON output and the footer): `refs` returns *all* word-boundary references, not a definition-resolved set — it can't distinguish a definition from a call or tell same-named symbols in different scopes apart. It's a cheap evidence aid for the verification gate, not a semantic index. (A definition-only mode is a Phase 4 candidate.)
 
 - [ ] **Step 2: Run to verify failure** — handler missing → exit 1 / unknown subcommand.
 
@@ -713,18 +960,23 @@ it('defaults include protected categories that learnings cannot suppress', () =>
 });
 ```
 
+> `expect.arrayContaining([...])` is a **subset** assertion, so the 5-item default `['security','data-loss','crash','injection','auth']` satisfies it — there is no test/default contradiction. Validate `protected_categories` like `categories` (must be a list; non-list → warn + default).
+
 - [ ] **Step 2: Run → FAIL.**
 
-- [ ] **Step 3: Implement** — add to `DEFAULTS`: `protected_categories: ['security', 'data-loss', 'crash', 'injection', 'auth'],`
+- [ ] **Step 3: Implement** — add to `DEFAULTS`: `protected_categories: ['security', 'data-loss', 'crash', 'injection', 'auth'],` (and the back-compat array-merge: `protected_categories: Array.isArray(raw.protected_categories) ? raw.protected_categories : [...DEFAULTS.protected_categories]`).
 
 - [ ] **Step 4: SKILL.md** — in the learnings paragraph, add:
 
 ```
 A learning/noise pattern may downgrade or hide a STYLE/QUALITY finding, but it
-must NEVER suppress a finding in a protected category (config
-`protected_categories`, default: security, data-loss, crash, injection, auth).
-If a learning conflicts with a protected-category finding, the finding wins.
+must NEVER suppress a finding in a protected category. Read the effective
+`protected_categories` from the `anchor config --format json` you ran in Step 2
+(default: security, data-loss, crash, injection, auth). If a learning conflicts
+with a protected-category finding, the finding wins.
 ```
+
+This relies on the **effective-config bridge** (Conventions): the SKILL gets `protected_categories` from `anchor config --format json`, not from raw YAML, so it sees the default even when the user never set the key. This generalizes the existing always-on SAFETY GUARDRAIL into a config-driven floor.
 
 - [ ] **Step 5:** document in `templates/config.yaml`; run unit; commit.
 
@@ -738,7 +990,13 @@ Point the reviewer at non-imported contracts (schema, OpenAPI, design docs) the 
 - Modify: `skills/anchor-review/SKILL.md` (Step 4 note)
 - Test: `tests/unit/manifest.test.mjs`, extend `tests/integration/context.test.mjs`
 
-**Design.** `.anchor/files.json` = `[{ path, description, scope }]`. `selectManifest(entries, changedPaths)` returns entries whose `scope` glob (default `**`) matches a changed path. `getContext` appends matched, existing manifest files to its `files` list with `reason: 'manifest'` and the `description`, deduped against importer/importee.
+**Design.** `.anchor/files.json` = `[{ path, description, scope }]`, all paths **repo-relative**. `selectManifest(entries, changedPaths)` returns entries whose `scope` glob (default `**`) matches a changed path. `getContext` appends matched, **existing** (`existsSync`) manifest files to its `files` list with `reason: 'manifest'` and the `description`.
+
+Decisions the audit said were ambiguous — pin them down:
+- **Return shape (additive, non-breaking):** each `files[]` entry may now carry an optional `description`. Importer/importee/caller/sibling entries omit it (or set `undefined`); only `manifest` entries set it. Existing consumers (the SKILL reads `path`/`reason`; `context.test.mjs` asserts via `.map(f => f.path)` and `f.reason`) are unaffected by an extra key.
+- **Dedup priority:** the import graph wins. Process the manifest **after** importer/importee population into the same `related` Map (first-write-wins is already the rule), so a file that is both an importee and a manifest entry keeps `reason: 'importer'`/`'importee'`. Only files not already related get `reason: 'manifest'`. Manifest files are also excluded if they are themselves in the changed set.
+- **`loadManifest(repoDir)` validation:** read `.anchor/files.json`; if missing → `[]`; if unparseable JSON or not an array → `[]` (no throw); drop entries lacking a string `path`; coerce a missing `scope` to `'**'`. Malformed input must never break a review.
+- **maxFiles ordering:** keep the existing cap; order importer → importee → manifest so the most directly-relevant context survives the cap.
 
 - [ ] **Step 1: Failing unit test**
 
@@ -765,7 +1023,17 @@ Upgrade learnings from bare patterns to scoped records so a domain-layer learnin
 - Modify: `skills/anchor-review/SKILL.md` (Step 2 — scope-filter learnings; Step 8 `mark as noise` writes scope)
 - Test: `tests/unit/learn.test.mjs`
 
-**Design.** Keep the `### heading` + `<!-- reason: ... -->` format; add an optional second comment `<!-- meta: {"scope":"src/db/**","category":"style","action":"suppress"} -->`. `parse` reads it if present (absent → `{ scope: '**', action: 'suppress' }`). `selectLearnings(patterns, changedPaths)` filters by scope. Existing learnings (no meta) parse unchanged → apply everywhere (current behavior preserved).
+**Design.** Keep the `### heading` + `<!-- reason: ... -->` format; add an optional third line `<!-- meta: {"scope":"src/db/**","category":"style","action":"suppress"} -->`. The audit flagged four things to make concrete:
+
+- **Parse regex (handles old + new, EOF-safe):**
+  ```js
+  const re = /^### (.+)\n(?:<!-- reason: (.*?) -->\n?)?(?:<!-- meta: (\{.*?\}) -->\n?)?/gm;
+  // group 3 (meta JSON) is optional; JSON.parse in a try/catch, default {} on failure
+  // result per entry: { heading, reason, scope: meta.scope ?? '**', category: meta.category ?? null, action: meta.action ?? 'suppress' }
+  ```
+- **Serialize is conditional** — only emit the `<!-- meta: ... -->` line when an entry has non-default meta (`scope !== '**'` or a `category`/non-`suppress` `action`). This guarantees the **legacy round-trip**: an old entry (no meta) is re-serialized *without* a meta line. Add a test: `addLearning(dir, 'old', 'why'); list; serialize → expect(text).not.toContain('meta:')`.
+- **`addLearning(repoDir, pattern, reason, meta = {})`** — 4th arg optional; the existing 3-arg call sites keep working (meta defaults to `{}` → no meta line written). `selectLearnings(patterns, changedPaths)` filters by `scope` via the shared Minimatch helper (reused from rules/manifest), defaulting `scope` to `'**'` (legacy entries apply everywhere → current behavior preserved).
+- **SKILL retrieval mechanism (the missing piece):** extend the `learn list` handler to accept `--from-diff <target>` (and `--staged`); when present it resolves the changed paths via `getDiff` and returns only scope-matching learnings (`{ patterns: selectLearnings(all, changedPaths) }`). SKILL Step 2 calls `anchor learn list --from-diff <target>` so it only loads learnings relevant to the changed files — killing repeat FPs without blind spots. Bare `learn list` is unchanged (returns all).
 
 - [ ] **Step 1: Failing test** — round-trip a scoped learning + back-compat for an old-format entry
 
@@ -792,24 +1060,36 @@ Pass the active `categories` + `strictness` into the prompt so out-of-scope and 
 - Modify: `skills/anchor-review/SKILL.md` (Step 6)
 - Test: none (prompt-only) — validated via `npm run eval` (noisy-style fixture must stay quiet at default strictness)
 
-- [ ] **Step 1:** SKILL.md Step 6 — make category an explicit generation gate:
+- [ ] **Step 1:** SKILL.md Step 6 — make category an explicit generation gate, reading the active `categories`/`strictness` from the `anchor config --format json` run in Step 2 (the effective-config bridge — not raw YAML, so omitted keys still resolve to their defaults):
 
 ```
-Generate findings ONLY in the active `categories` (config; default all). Do not
-produce a finding outside them, even to downgrade it. `category` (logic/security/
-perf/style/docs/tests) and `severity` are independent axes: a logic bug can be
-any severity; a style nit is category=style. At strictness 2 (default) do not
-emit category=style/docs findings unless they cause a real bug; at strictness 3
-emit only logic/security with crash/data-loss impact.
+Generate findings ONLY in the active `categories` (from `anchor config`; default
+all). Do not produce a finding outside them, even to downgrade it. `category`
+(logic/security/perf/style/docs/tests) and `severity` are independent axes: a
+logic bug can be any severity; a style nit is category=style. Apply the active
+strictness as a generation gate:
+  - strictness 1: all categories, including style/docs nits.
+  - strictness 2 (default): do NOT emit category=style/docs findings unless they
+    cause a real bug (readability/maintainability that risks a defect).
+  - strictness 3: emit ONLY logic/security findings with crash/data-loss impact.
+The protected-categories floor (Step 6 SAFETY GUARDRAIL) still overrides this:
+never drop a protected-category finding to satisfy a category/strictness gate.
 ```
 
-- [ ] **Step 2:** Add a `noisy-style` eval case to `tests/eval/cases.mjs` (a private-method-missing-docstring change with a `style` learning) whose `cleanFiles` asserts ZERO findings at default strictness. Run `npm run eval` to confirm 0 false positives. Commit.
+- [ ] **Step 2:** Add a `noisy-style` eval case to `tests/eval/cases.mjs` — a behavior-preserving change that a strictness-2 review must keep quiet (e.g. renaming a local or adding a private method without a docstring), with `expected: []` and `cleanFiles: [<the changed file>]` so any finding on it counts as a false positive. (This is an LLM eval case in `cases.mjs`, distinct from the deterministic `tests/golden/__snapshots__/noisy-style.json` snapshot.) Because the LLM eval only scores when a model is available, ALSO assert the deterministic guarantee where possible: the case's inputs (diff + context) are produced by the same scripts, so a unit-level check that the gathered context is correct is the CI-enforceable part; the zero-FP claim is the manual eval gate. Run `npm run eval` (with `ANCHOR_EVAL_GENERATE=1` + `claude`) to confirm 0 false positives. Commit.
 
 ---
 
 ## Phase 4 — Medium effort (task specs; expand to TDD steps when scheduled)
 
 Each item below is specced to interface + representative test + acceptance. They are independent; schedule by value.
+
+> **Status:** Phase 4 is intentionally **deferred** — these are deliberately not implemented in the first build pass (which covers Phases M.1-scorer, 1, 2, 3, and M.2). They are enriched specs, not placeholders. **Resolve these audit-found under-specifications before scheduling each:**
+> - **4A (callers + siblings):** *Depends on 2C* (`findRefs`). Pin "siblings": a separate, testable `findSiblings(repoDir, filePath, { max = 5 })` — same-directory files plus same naming-family (shared 3+-char stem, e.g. `getUserById`↔`getOrderById`), capped, deterministic order. Reuse `findRefs` for callers (`reason: 'caller'`). Document it as grep-approximate.
+> - **4B (cascading config):** Define array-merge semantics explicitly — `rules`/`ignore` *append* parent→child, `disabled_rules: [id]` is a blocklist applied last, scalars are child-wins. Decide budget granularity: keep `applyBudget` **aggregate** (per-PR), not per-file, to avoid breaking `overBudget`. Cache resolved config by directory. Golden/integration must be unchanged when no subdir configs exist.
+> - **4C (incremental + dedup):** Specify the hash: `sha1(repoRelFile + '\0' + normalize(message))` where `normalize` = lowercase, collapse whitespace, strip line numbers/counts. Specify SKILL injection: prior finding-hashes ride along as a JSON block in the review inputs (a new `anchor diff --since-last` derives `<lastReviewedSha>..HEAD` from `listReviews()`). Document the rebase caveat (a rebased prior SHA yields a noisy range — fall back to full diff if the SHA is unreachable).
+> - **4D (fix-spec):** Define the machine-readable schema, mirroring 1.4's `anchor:meta`: `<!-- anchor:fix {"file":"src/a.ts","range":[5,7],"replacement":"…"} -->` per finding. Test-command discovery: read `scripts.test`/`scripts.build` from `package.json`, else ask. "Can't write a concrete fix-spec → likely noise; downgrade/drop."
+> - **4E (linked-issue criteria):** Extraction heuristic: parse markdown checklist items (`- [ ]`/`- [x]`) from the issue body; if none, fall back to lines under an "Acceptance criteria"/"Requirements" heading. Three-state verdict (Addressed/Not-addressed/Unclear), abstain when unsure. PR-mode only; needs `gh`. Prompt-only (no lib code).
 
 ### Task 4A: Local graph-context approximation (callers + pattern-siblings)
 - **Files:** `lib/context.mjs` (extend `getContext`); `tests/integration/context.test.mjs`.
@@ -860,22 +1140,27 @@ Record these so future contributors don't waste effort rebuilding cloud features
 
 The eval (`lib/eval.mjs` + `tests/eval/`) is what makes every other phase *safe* — it measures whether a change raises recall / lowers false positives instead of guessing. Greptile/CodeRabbit tune against hosted telemetry; this is Anchor's local equivalent.
 
-### Task M.1: Expand fixtures to cover every category and the new mechanisms
+### Task M.1: Expand fixtures + harden the scorer
 - **Files:** `tests/eval/cases.mjs`, `tests/eval/run.mjs`, `lib/eval.mjs`, `tests/unit/eval.test.mjs`.
-- **Approach (TDD the scorer changes; fixtures are data):** add fixtures for each category (logic/security/perf already exist — add docs, tests, style) and for the new mechanisms: a `static-analyzer-catch` case (a tsc/eslint-detectable bug that should appear once, not duplicated), a `pattern-inconsistency` case (sibling uses a safe pattern, the change doesn't), and a `protected-not-suppressed` case (a security finding that a learning must NOT silence). Each declares `expected` + `cleanFiles`.
-- **Acceptance:** `npm run eval` reports per-case + aggregate recall/precision/false-positives and gates (recall ≥ 0.8, false-positives = 0). Already implemented; this widens coverage.
+- **Scorer fix (TDD, CI-enforceable — this part does NOT need a model):** the deep review found `parseFindings`' category capture `([a-z]+)` silently drops hyphenated category tokens (`data-loss`, `null-deref`) — the very words the SAFETY GUARDRAIL uses. Relax it to `([a-z][a-z-]*)` and add unit tests proving `[1] src/db.ts:10  ·  data-loss` now parses. Also document (and test) the `sameFile` suffix-collision behavior (`auth.ts` matching both `src/auth.ts` and `lib/auth.ts`) so it's a known, asserted property rather than a latent surprise — prefer an exact match when present.
+- **Fixtures (data):** add cases for each category (logic/security/perf exist — add docs, tests, style) and for the new mechanisms: a `static-analyzer-catch` case (a tsc/eslint-detectable bug that should appear once, not duplicated — **depends on 2A**), a `pattern-inconsistency` case (a sibling uses a safe pattern, the change doesn't — **depends on 4A**), and a `protected-not-suppressed` case. Each declares `expected` + `cleanFiles`.
+- **Sequencing note:** the docs/tests/style fixtures and the scorer fix can land immediately; the `static-analyzer-catch` and `pattern-inconsistency` fixtures block on 2A and 4A respectively.
+- **Classification note:** `protected-not-suppressed` is a **SKILL-behavior** case, not a fixture-shape difference — the fixture is an ordinary security change plus a *learning that should be ignored*; the assertion is that the finding still appears. Mark it as a model-required eval case (it can't be scored by the deterministic harness without generation), or move it to `tests/manual/SMOKE.md`.
+- **Acceptance:** the scorer fix + its unit tests are green in CI; `npm run eval` (with a model) reports per-case + aggregate recall/precision/false-positives and gates (recall ≥ 0.8, false-positives = 0).
 
 ### Task M.2: Make the eval the phase gate
-- **Files:** `package.json` (add `"eval:ci": "ANCHOR_EVAL_GENERATE=1 node tests/eval/run.mjs"`), `CHANGELOG`/contributing note.
-- **Approach:** document the workflow: run `npm run eval` (generate reviews via `claude -p` when `ANCHOR_EVAL_GENERATE=1`, else score pre-generated reviews in `tests/eval/.out/`), record baseline before a phase, compare after. A phase that drops recall or raises false-positives is not done.
-- **Acceptance:** the convention is documented and the runner exits non-zero on regression (already implemented).
+- **Files:** `package.json` (add an `eval:ci` script), `README`/contributing note.
+- **Already true (verified):** `tests/eval/run.mjs` sets `process.exitCode = pass ? 0 : 1` with `pass = aggRecall >= 0.8 && totFp === 0`, so the runner already fails on regression *when it scores*. The gap is only the convenience script + docs.
+- **Approach:** add `"eval:ci": "ANCHOR_EVAL_GENERATE=1 node tests/eval/run.mjs"`. Note the cross-platform caveat: the inline `VAR=1 cmd` form is POSIX-only; for Windows either add `cross-env` (a new devDep — only if a Windows contributor needs it) or set `process.env.ANCHOR_EVAL_GENERATE` inside a tiny wrapper. Anchor's other scripts assume a POSIX shell, so the inline form is acceptable for now — document it.
+- **Document the reality (per Conventions):** without `ANCHOR_EVAL_GENERATE=1` + an authenticated `claude`, `eval:ci` writes prompts and exits 0 **without scoring** — it is a human/manual gate, not a silent CI pass. The CI-binding gate is the deterministic suite + the scorer unit tests.
+- **Acceptance:** the convention is documented and `npm run eval:ci` (with a model) exits non-zero on regression.
 
 ---
 
 ## Self-review (against the request)
 
 **Coverage of the six buckets:**
-- **Small things:** NaN guard (1.1), config validation (1.2), command timeouts (1.3), extractReviewMeta coupling (1.4), ignore-list unification (1.5), stale-doc note (1.6). ✓
+- **Small things:** NaN guard (1.1), config hardening — enums + numeric bounds + `ensureGitignore` idempotency (1.2), command timeouts w/ correct detection (1.3), extractReviewMeta coupling (1.4), ignore-list unification (1.5), stale-doc note (1.6), diff-parser truncation hardening (1.7). ✓
 - **Big 3:** static-analyzer integration (2A), positive rules (2B), evidence-seeking verification (2C). ✓
 - **High-value low-effort:** protected categories (3A), context manifest (3B), richer learnings (3C), category-gates-generation (3D). ✓
 - **Medium effort:** graph approximation (4A), cascading config (4B), incremental+dedup (4C), fix-spec (4D), linked-issue (4E). ✓
@@ -892,4 +1177,19 @@ The eval (`lib/eval.mjs` + `tests/eval/`) is what makes every other phase *safe*
 
 ## Execution handoff
 
-Suggested order: **Phase M.1 (baseline) → Phase 1 → Phase 2 (2A, then 2C, then 2B) → Phase 3 → Phase 4 by value.** Each task is an independent commit; each phase is independently shippable and must pass the eval gate.
+Suggested order: **Phase M.1 scorer-fix (baseline) → Phase 1 (1.1–1.7) → effective-config bridge (SKILL Step 2 + `anchor config` already exists) → Phase 2 (2A, then 2C, then 2B) → Phase 3 (3A, 3B, 3C, 3D) → Phase M.2 docs → Phase 4 by value.** Each task is an independent commit; each phase is independently shippable. Respect the shared-file sequencing rule (Conventions): parallelize only the standalone new modules (`analyzers`/`rules`/`refs`/`manifest` + unit tests); serialize all `cli.mjs`/`config.mjs`/`SKILL.md`/`templates` edits and bundle once per batch. The deterministic suite (unit + integration + golden + typecheck) is the binding gate; the LLM eval is the manual quality gate where a model is available.
+
+---
+
+## Changelog of this revision (2026-06-16, post deep-audit)
+
+An 11-agent deep code review + plan audit drove these changes vs the first draft:
+- Added **Task 1.7** (parseUnifiedDiff truncation bug — a real correctness defect found in the review).
+- Broadened **1.2** to also bound numerics and fix the `ensureGitignore` whitespace idempotency bug.
+- Fixed **1.3**'s timeout detection (handle `ETIMEDOUT` *and* signal-kill; distinct code 124; verify empirically) and gave slow `gh` calls an explicit 120s timeout.
+- Rebuilt **2A** around `resolveBin` (project-local `node_modules/.bin` — without this analyzers almost never fire), repo-relative path normalization, `changed`-tagging + cap, consistent `tools[]` shape, explicit async-`main()` wiring, and a deterministic fake-bin integration test.
+- Added **scope-glob validation** to 2B and real fixture tests + a documented limitation to 2C.
+- Introduced the **effective-config bridge** (SKILL runs `anchor config --format json`) to resolve the recurring "SKILL can't see merged config defaults" gap behind 3A and 3D.
+- Pinned down **3B** (getContext `description` field, dedup priority, validation), **3C** (parse/serialize regex, `learn list --from-diff` retrieval, legacy round-trip), and **3D** (config-driven gating + concrete eval case).
+- Added the **eval-gate reality note** (LLM eval is a manual gate; deterministic suite is the CI gate) and the **scorer regex relax** for hyphenated categories in M.1.
+- Enriched Phase 4 specs with the audit's under-specification fixes.

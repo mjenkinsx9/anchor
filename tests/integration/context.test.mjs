@@ -1,4 +1,6 @@
 import { describe, it, expect, afterAll } from 'vitest';
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { getContext, parseImports, resolveImport } from '../../lib/context.mjs';
 import { makeFixtureRepo } from '../helpers/fixture.mjs';
 
@@ -55,5 +57,33 @@ describe('getContext', () => {
   it('no matches → empty list, no throw', () => {
     const ctx = getContext({ files: ['src/unrelated.ts'], repoDir: repo.dir, maxFiles: 50, ignore: ['**/*.test.ts'] });
     expect(Array.isArray(ctx.files)).toBe(true);
+  });
+});
+
+describe('getContext manifest', () => {
+  it('adds scoped manifest files with reason+description; ignores when scope misses', () => {
+    const m = makeFixtureRepo({
+      'src/db/user.ts': 'export const u = 1;\n',
+      'prisma/schema.prisma': 'model User {}\n',
+    });
+    try {
+      mkdirSync(join(m.dir, '.anchor'), { recursive: true });
+      writeFileSync(join(m.dir, '.anchor', 'files.json'), JSON.stringify([
+        { path: 'prisma/schema.prisma', description: 'DB schema', scope: 'src/db/**' },
+      ]));
+      const hit = getContext({ files: ['src/db/user.ts'], repoDir: m.dir, maxFiles: 50, ignore: [] });
+      expect(hit.files.find((f) => f.path === 'prisma/schema.prisma'))
+        .toMatchObject({ reason: 'manifest', description: 'DB schema' });
+      const miss = getContext({ files: ['src/ui/button.tsx'], repoDir: m.dir, maxFiles: 50, ignore: [] });
+      expect(miss.files.map((f) => f.path)).not.toContain('prisma/schema.prisma');
+    } finally { m.cleanup(); }
+  });
+  it('malformed files.json is ignored (no throw)', () => {
+    const m = makeFixtureRepo({ 'src/a.ts': 'export const a = 1;\n' });
+    try {
+      mkdirSync(join(m.dir, '.anchor'), { recursive: true });
+      writeFileSync(join(m.dir, '.anchor', 'files.json'), '{ not json');
+      expect(() => getContext({ files: ['src/a.ts'], repoDir: m.dir, maxFiles: 50, ignore: [] })).not.toThrow();
+    } finally { m.cleanup(); }
   });
 });

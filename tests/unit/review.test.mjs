@@ -1,6 +1,6 @@
 import { describe, it, expect, afterAll } from 'vitest';
 import { readFileSync, existsSync } from 'node:fs';
-import { saveReview, listReviews, showReview } from '../../lib/review.mjs';
+import { saveReview, listReviews, showReview, extractReviewMeta } from '../../lib/review.mjs';
 import { makeFixtureRepo } from '../helpers/fixture.mjs';
 
 const repo = makeFixtureRepo({ 'a.txt': 'x\n' });
@@ -94,5 +94,27 @@ describe('listReviews / showReview', () => {
   });
   it('short needles (<4 chars) never match', () => {
     expect(showReview(repo.dir, '06')).toBeNull();
+  });
+});
+
+describe('extractReviewMeta', () => {
+  it('prefers the machine-readable anchor:meta block over text scraping', () => {
+    const content = `<!-- anchor:meta {"score":4,"severities":{"critical":1,"high":0,"medium":2,"low":0}} -->\n` +
+      `Confidence: 1 / 5\n🔴 CRITICAL  (9)\n`; // text says 9/1, block says 1/4 — block wins
+    const m = extractReviewMeta(content);
+    expect(m.score).toBe(4);
+    expect(m.severities.critical).toBe(1);
+    expect(m.severities.medium).toBe(2);
+  });
+  it('falls back to text scraping when the block is malformed', () => {
+    const content = `<!-- anchor:meta {not valid json} -->\nConfidence: 3 / 5\n🔴 CRITICAL  (2)\n`;
+    const m = extractReviewMeta(content);
+    expect(m.score).toBe(3);
+    expect(m.severities.critical).toBe(2);
+  });
+  it('returns nulls for freeform content with neither block nor markers', () => {
+    const m = extractReviewMeta('just some notes, no format\n');
+    expect(m.score).toBeNull();
+    expect(m.severities).toBeNull();
   });
 });

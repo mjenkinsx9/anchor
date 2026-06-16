@@ -29,6 +29,24 @@ categories:
   - security
   - perf
 
+# Categories a learning/noise marking can NEVER suppress (always surfaced).
+# Default: security, data-loss, crash, injection, auth.
+protected_categories:
+  - security
+  - data-loss
+  - crash
+  - injection
+  - auth
+
+# Positive review rules — enforce intent (vs learnings, which suppress noise).
+# Each: id, rule (specific + measurable), optional scope glob, optional severity.
+# A matching rule violation is a finding at the rule's severity. Default: none.
+rules: []
+#  - id: no-raw-sql
+#    rule: "Parameterize all SQL; never string-concatenate user input into queries."
+#    scope: "src/db/**"
+#    severity: high
+
 # Confidence floor. Findings the LLM rates below this are not surfaced. 0-5.
 min_confidence: 2
 

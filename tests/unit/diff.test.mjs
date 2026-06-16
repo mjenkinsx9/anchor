@@ -148,6 +148,25 @@ describe('parseUnifiedDiff', () => {
     expect(files[0].path).toBe('new.ts');
     expect(files[0].renamedFrom).toBe('old.ts');
   });
+  it('does not swallow the next file when a hunk is truncated', () => {
+    const diff = [
+      'diff --git a/a.ts b/a.ts',
+      '--- a/a.ts',
+      '+++ b/a.ts',
+      '@@ -1,5 +1,5 @@', // claims 5 lines…
+      ' one',
+      '+two',           // …but only 2 body lines are present (truncated)
+      'diff --git a/b.ts b/b.ts',
+      '--- a/b.ts',
+      '+++ b/b.ts',
+      '@@ -1 +1 @@',
+      '-x',
+      '+y',
+      '',
+    ].join('\n');
+    const files = parseUnifiedDiff(diff);
+    expect(files.map((f) => f.path)).toEqual(['a.ts', 'b.ts']); // b.ts must survive
+  });
 });
 
 describe('applyBudget', () => {
@@ -176,5 +195,11 @@ describe('applyBudget', () => {
   it('--force suppresses the flag even when over budget', () => {
     const r = applyBudget(mk([{ path: 'a', added: 999, removed: 0, hunks: [] }]), { maxLines: 1, maxFiles: 1, force: true });
     expect(r.overBudget).toBeUndefined();
+  });
+
+  it('treats a non-finite budget as the fallback, not as "no limit"', () => {
+    const r = applyBudget(mk([{ path: 'a', added: 9999, removed: 0, hunks: [] }]),
+      { maxLines: NaN, maxFiles: NaN, fallbackLines: 100, fallbackFiles: 5 });
+    expect(r.overBudget).toBe(true); // NaN must not silently disable the budget
   });
 });

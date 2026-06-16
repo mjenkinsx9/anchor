@@ -17,6 +17,13 @@ describe('runCmd', () => {
     const r = runCmd('definitely-not-a-real-binary-xyz', []);
     expect(r.code).toBe(127);
   });
+  it('applies a timeout and reports a clean timeout code/message', () => {
+    const start = Date.now();
+    const r = runCmd('sh', ['-c', 'sleep 5'], { defaultTimeout: 200 });
+    expect(Date.now() - start).toBeLessThan(3000); // killed well before 5s
+    expect(r.code).toBe(124); // GNU timeout convention, distinct from 127
+    expect(r.stderr).toMatch(/timed out/);
+  });
 });
 
 describe('git helpers', () => {

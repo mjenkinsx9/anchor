@@ -39,4 +39,13 @@ export const CASES = [
     expected: [],
     cleanFiles: ['src/sum.ts'],
   },
+  {
+    name: 'noisy-style',
+    base: { 'src/calc.ts': 'export function calc(a: number, b: number) {\n  const r = a + b;\n  return r;\n}\n' },
+    // Behavior-preserving local rename (r → result). At default strictness a good
+    // review must stay quiet — any finding here is a style false positive.
+    change: { 'src/calc.ts': 'export function calc(a: number, b: number) {\n  const result = a + b;\n  return result;\n}\n' },
+    expected: [],
+    cleanFiles: ['src/calc.ts'],
+  },
 ];

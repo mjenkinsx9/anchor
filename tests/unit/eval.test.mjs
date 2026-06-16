@@ -27,6 +27,13 @@ describe('parseFindings', () => {
   it('returns [] for a review with no findings', () => {
     expect(parseFindings('🟢 LOW  (0)\n  None.')).toEqual([]);
   });
+
+  it('accepts hyphenated category tokens (data-loss, null-deref)', () => {
+    const review = '🔴 CRITICAL  (1)\n  [1] src/db.ts:10  ·  data-loss\n  Dropped write.';
+    const f = parseFindings(review);
+    expect(f).toHaveLength(1);
+    expect(f[0]).toMatchObject({ file: 'src/db.ts', category: 'data-loss' });
+  });
 });
 
 describe('scoreReview', () => {
