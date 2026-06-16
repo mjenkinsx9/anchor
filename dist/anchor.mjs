@@ -2412,7 +2412,7 @@ var DEFAULTS = {
   max_findings: 50,
   categories: ["logic", "security", "perf", "style", "docs", "tests"],
   min_confidence: 2,
-  max_diff_lines: 2e3,
+  max_diff_lines: 15e3,
   max_files: 100,
   output: { show_whats_good: true, show_diff_stats: true, color: "auto" }
 };
@@ -2633,6 +2633,22 @@ function parseUnifiedDiff(text) {
   }
   flush();
   return files;
+}
+function applyBudget(result, { maxLines, maxFiles, force = false }) {
+  const totalLines = result.files.reduce((s, f) => s + f.added + f.removed, 0);
+  const reasons = [];
+  if (totalLines > maxLines) {
+    reasons.push(`${totalLines.toLocaleString()} change-lines (budget ${maxLines.toLocaleString()})`);
+  }
+  if (result.files.length > maxFiles) {
+    reasons.push(`${result.files.length.toLocaleString()} files (budget ${maxFiles.toLocaleString()})`);
+  }
+  if (force || reasons.length === 0) return result;
+  return {
+    ...result,
+    overBudget: true,
+    budgetWarning: `anchor: diff exceeds budget \u2014 ${reasons.join("; ")}. Reviewing anyway; prioritize the most important files. Use --force to silence, --max-diff-lines N to raise the budget, or split the change.`
+  };
 }
 function withStats(result) {
   const stats = result.files.reduce(
@@ -5088,7 +5104,7 @@ function uninstallHook(repoDir) {
 
 // lib/cli.mjs
 var USAGE = `usage: anchor <init|diff|context|review|learn|status|config|doctor|hook> [args] [--format json|text]`;
-var VALUED = /* @__PURE__ */ new Set(["format", "reason", "max-files", "from-diff", "depth", "target"]);
+var VALUED = /* @__PURE__ */ new Set(["format", "reason", "max-files", "from-diff", "depth", "target", "max-diff-lines"]);
 function parseArgs(argv) {
   const positional = [];
   const flags = /* @__PURE__ */ new Map();
@@ -5152,23 +5168,18 @@ var HANDLERS = {
     }
     emit(config, flags);
   },
-  diff(positional, flags, rawTokens) {
+  diff(positional, flags) {
     requireRepo();
     const config = loadCfg();
-    const d = getDiff(rawTokens, { cwd: process.cwd() });
+    const tokens = flags.has("staged") ? ["--staged", ...positional] : positional;
+    const d = getDiff(tokens, { cwd: process.cwd() });
     const filtered = d.files.filter((f) => !isIgnored(f.path, config.ignore));
-    const result = withStats({ ...d, files: filtered });
-    const totalLines = result.files.reduce((s, f) => s + f.added + f.removed, 0);
-    if (totalLines > config.max_diff_lines) {
-      throw new Error(
-        `anchor: diff is ${totalLines.toLocaleString()} lines (max is ${config.max_diff_lines.toLocaleString()}). Adjust .anchor/config.yaml -> max_diff_lines, or split the PR.`
-      );
-    }
-    if (result.files.length > config.max_files) {
-      throw new Error(
-        `anchor: diff touches ${result.files.length} files (max is ${config.max_files}). Adjust .anchor/config.yaml -> max_files, or split the PR.`
-      );
-    }
+    const result = applyBudget(withStats({ ...d, files: filtered }), {
+      maxLines: Number(flags.get("max-diff-lines") ?? config.max_diff_lines),
+      maxFiles: Number(flags.get("max-files") ?? config.max_files),
+      force: flags.has("force")
+    });
+    if (result.budgetWarning) process.stderr.write(result.budgetWarning + "\n");
     emit(result, flags);
   },
   context(positional, flags, rawTokens) {

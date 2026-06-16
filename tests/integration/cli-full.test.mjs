@@ -24,15 +24,36 @@ describe('anchor CLI end-to-end', () => {
     expect(d.mode).toBe('uncommitted');
     expect(d.files[0].path).toBe('src/a.ts');
   });
-  it('diff: bails with hint when over max_diff_lines', () => {
+  it('diff: flags overBudget (does not fail) when over the line budget', () => {
     writeFileSync(join(repo.dir, 'src/big.ts'), 'export const big = [\n' + '1,\n'.repeat(3000) + '];\n');
     repo.git('add', '-A');
-    const r = anchor(['diff']);
-    expect(r.status).toBe(1);
-    expect(r.stderr).toMatch(/diff is [\d,]+ lines \(max is 2,?000\)/);
-    repo.git('reset');
-    repo.git('checkout', '--', '.');
-    repo.git('clean', '-f', 'src/big.ts');
+    try {
+      const r = anchor(['diff', '--max-diff-lines', '100']);
+      expect(r.status).toBe(0); // graceful: no longer exits 1
+      const d = JSON.parse(r.stdout);
+      expect(d.overBudget).toBe(true);
+      expect(d.budgetWarning).toMatch(/budget/);
+      expect(d.files.length).toBeGreaterThan(0); // diff still emitted
+      expect(r.stderr).toMatch(/exceeds budget/); // human-visible warning
+    } finally {
+      repo.git('reset');
+      repo.git('checkout', '--', '.');
+      rmSync(join(repo.dir, 'src/big.ts'), { force: true });
+    }
+  });
+  it('diff: --force suppresses the overBudget flag', () => {
+    writeFileSync(join(repo.dir, 'src/big.ts'), 'export const big = [\n' + '1,\n'.repeat(3000) + '];\n');
+    repo.git('add', '-A');
+    try {
+      const r = anchor(['diff', '--max-diff-lines', '100', '--force']);
+      expect(r.status).toBe(0);
+      const d = JSON.parse(r.stdout);
+      expect(d.overBudget).toBeUndefined();
+    } finally {
+      repo.git('reset');
+      repo.git('checkout', '--', '.');
+      rmSync(join(repo.dir, 'src/big.ts'), { force: true });
+    }
   });
   it('context: --from-diff finds related files', () => {
     writeFileSync(join(repo.dir, 'src/a.ts'), "import { b } from './b';\nexport const a = b + 2;\n");

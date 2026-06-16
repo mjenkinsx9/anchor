@@ -60,13 +60,23 @@ richer reviews." Then continue — grep context still works.
 
 ### Step 3 — Get the diff
 Run `anchor diff <target>` via Bash and parse the JSON. If it exits 1
-(too large / not a repo / bad target), show the error verbatim and stop.
+(not a repo / bad target), show the error verbatim and stop.
+
+If the JSON has `overBudget: true`, the diff is large but **still present** —
+do NOT stop. Surface the `budgetWarning` to the user, then review the
+highest-signal files first (entrypoints, security-sensitive and hand-written
+code before generated/lock/vendored files), and record in the "Context used"
+footer which files you prioritized and which you skipped. The user can re-run
+with `--max-diff-lines N` (raise the budget) or `--force` (silence the flag).
 
 ### Step 3b — PR/issue context (PR mode only, skip if `--no-pr-context`)
-Run: `gh pr view <N> --json title,body,closingIssues`
-Add PR title + body + each linked issue to the context under a
-`## PR/issue context` label. If `gh` fails or there is no body/issues, skip
-silently — never block the review. Note failures for the Context used footer.
+Run: `gh pr view <N> --json title,body` (these fields always exist). Do NOT
+request `closingIssues` — it is not a valid `gh pr view --json` field and makes
+the whole call fail. Derive linked issues best-effort by scanning the body for
+`(closes|fixes|resolves) #<n>` and fetching each with
+`gh issue view <n> --json title,body`. Add PR title + body + linked issues
+under a `## PR/issue context` label. If `gh` fails or there is no body/issues,
+skip silently — never block the review. Note failures for the Context used footer.
 
 ### Step 3c — CI failure context (PR mode only, skip if `--no-ci-context`)
 Run: `gh pr checks <N>`. If any check failed, get the failed log:
@@ -101,6 +111,22 @@ pattern — do not flag it unless it creates a real bug.
 Be honest. If the code is clean, say so. Do not invent issues to fill quota.
 Respect the user's noise markings and the project's stated rules.
 
+**Verify before you flag (this is what separates a good review from a noisy one):**
+- For every CRITICAL or HIGH finding, confirm the claim against the actual code.
+  You fetched related files in Step 4 — read the defining file (open more if
+  needed). If a finding depends on behavior you cannot see in the diff or the
+  files you read (e.g. "this function is only called once", "this event never
+  fires for X", "this value is always non-null"), either read the source that
+  proves it, or cap the finding's confidence at 3 and label it
+  **unverified — needs confirmation**. Never assert runtime behavior you have
+  not checked.
+- For every suggested fix, confirm it does not break a path that is currently
+  correct, and state the assumption it relies on. A wrong fix is worse than no
+  finding — the `fix all` follow-up may apply it verbatim.
+- Self-refutation pass: for each CRITICAL/HIGH, spend one sentence trying to
+  disprove it. If it survives only as speculation, downgrade or drop it. A
+  short list of verified findings beats a long list of plausible ones.
+
 In PR mode: verify the change addresses the linked issue's acceptance
 criteria; call out unmet criteria. If CI failed, correlate the failure back
 to the changed lines and say which change likely caused it.
@@ -119,6 +145,13 @@ Filter post-hoc: drop findings below `min_severity`, below `min_confidence`,
 outside `categories`, and beyond `max_findings`.
 
 ### Step 7 — Render the review
+
+**Confidence rubric (tie the score to evidence, not vibes):** 5 = verified
+against source/spec you actually read; 4 = strongly supported by the diff plus
+a file you read; 3 = plausible from the diff alone; ≤2 = inference. The
+`Reasoning:` line must state what you verified and what you did not, and any
+finding labeled *unverified* caps the overall confidence at 3.
+
 Use exactly this structure (severities with zero findings show "None."):
 
 ```

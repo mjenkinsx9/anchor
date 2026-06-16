@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseTarget, parseUnifiedDiff } from '../../lib/diff.mjs';
+import { parseTarget, parseUnifiedDiff, applyBudget, withStats } from '../../lib/diff.mjs';
 
 describe('parseTarget', () => {
   it('no args → uncommitted', () => {
@@ -147,5 +147,34 @@ describe('parseUnifiedDiff', () => {
     expect(files).toHaveLength(1);
     expect(files[0].path).toBe('new.ts');
     expect(files[0].renamedFrom).toBe('old.ts');
+  });
+});
+
+describe('applyBudget', () => {
+  const mk = (files) => withStats({ mode: 'uncommitted', files });
+
+  it('flags overBudget when change-lines exceed the budget', () => {
+    const r = applyBudget(mk([{ path: 'a', added: 60, removed: 50, hunks: [] }]), { maxLines: 100, maxFiles: 100 });
+    expect(r.overBudget).toBe(true);
+    expect(r.budgetWarning).toMatch(/change-lines/);
+    expect(r.files).toHaveLength(1); // diff still present — graceful, not dropped
+  });
+
+  it('flags overBudget when the file count exceeds the budget', () => {
+    const files = Array.from({ length: 6 }, (_, i) => ({ path: `f${i}`, added: 1, removed: 0, hunks: [] }));
+    const r = applyBudget(mk(files), { maxLines: 10000, maxFiles: 5 });
+    expect(r.overBudget).toBe(true);
+    expect(r.budgetWarning).toMatch(/files/);
+  });
+
+  it('does not flag a diff within budget', () => {
+    const r = applyBudget(mk([{ path: 'a', added: 1, removed: 1, hunks: [] }]), { maxLines: 100, maxFiles: 100 });
+    expect(r.overBudget).toBeUndefined();
+    expect(r.budgetWarning).toBeUndefined();
+  });
+
+  it('--force suppresses the flag even when over budget', () => {
+    const r = applyBudget(mk([{ path: 'a', added: 999, removed: 0, hunks: [] }]), { maxLines: 1, maxFiles: 1, force: true });
+    expect(r.overBudget).toBeUndefined();
   });
 });

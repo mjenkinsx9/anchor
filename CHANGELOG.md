@@ -1,5 +1,24 @@
 # Changelog
 
+## Unreleased
+
+- **Diff budget no longer hard-fails.** Over `max_diff_lines`/`max_files`,
+  `anchor diff` now emits the diff with `overBudget: true` + a `budgetWarning`
+  instead of exiting 1, so large diffs still get reviewed (the reviewer
+  prioritizes the most important files). Default `max_diff_lines` raised
+  2,000 → 15,000. New per-run overrides: `--max-diff-lines N` and `--force`.
+- **Fixed:** valued-flag values (e.g. `--max-diff-lines 100`, `--format text`)
+  no longer leak into `anchor diff` as a bogus diff target.
+- **Review prompt (SKILL.md):** added a verification gate (confirm CRITICAL/HIGH
+  against source before flagging; cap unverified findings at confidence 3), a
+  fix-safety check, a self-refutation pass, and an evidence-tied confidence
+  rubric — fewer confident-but-wrong findings. Step 3 now handles `overBudget`
+  gracefully. Fixed the invalid `gh pr view --json closingIssues` call in
+  PR-context gathering.
+- **Review-quality eval harness** (`tests/eval/`, `lib/eval.mjs`, `npm run eval`):
+  fixtures with planted bugs plus a clean case, scored for recall / precision /
+  false-positives against the real review prompt. The scorer is unit-tested.
+
 ## v0.2.3 — 2026-06-14
 
 - Add richer Codex plugin metadata for directory presentation and discovery.

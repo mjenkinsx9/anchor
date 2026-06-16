@@ -57,7 +57,7 @@ describe('loadConfig', () => {
   it('numeric string max_diff_lines → warning + default (avoids broken comparisons)', () => {
     writeConfig('max_diff_lines: "2000"\n');
     const { config, warnings } = loadConfig(dir);
-    expect(config.max_diff_lines).toBe(2000);
+    expect(config.max_diff_lines).toBe(15000);
     expect(warnings[0]).toContain('max_diff_lines must be an integer');
   });
   it('does not alias DEFAULTS arrays', () => {

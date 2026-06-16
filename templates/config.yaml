@@ -32,8 +32,11 @@ categories:
 # Confidence floor. Findings the LLM rates below this are not surfaced. 0-5.
 min_confidence: 2
 
-# Diff limits
-max_diff_lines: 2000
+# Diff budget (added + removed change-lines, and changed-file count).
+# Over budget, Anchor does NOT bail — it flags the review as `overBudget` and
+# the reviewer prioritizes the most important files. Override per run with
+# `--max-diff-lines N` / `--max-files N`, or `--force` to silence the flag.
+max_diff_lines: 15000
 max_files: 100
 
 # Output options
