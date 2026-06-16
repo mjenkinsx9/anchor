@@ -1,5 +1,5 @@
 // lib/cli.mjs
-import { realpathSync, readFileSync as readFileSync9 } from "node:fs";
+import { realpathSync, readFileSync as readFileSync11 } from "node:fs";
 import { fileURLToPath as fileURLToPath2 } from "node:url";
 
 // lib/doctor.mjs
@@ -15,8 +15,14 @@ function runCmd(cmd, args, opts = {}) {
     env: opts.env,
     encoding: "utf8",
     maxBuffer: 64 * 1024 * 1024,
-    timeout: opts.timeout
+    timeout: opts.timeout ?? opts.defaultTimeout ?? 3e4
   });
+  const err = (
+    /** @type {any} */
+    res.error
+  );
+  const timedOut = err?.code === "ETIMEDOUT" || res.error == null && res.signal != null && res.status == null;
+  if (timedOut) return { stdout: res.stdout ?? "", stderr: `anchor: command timed out: ${cmd}`, code: 124 };
   if (res.error) return { stdout: "", stderr: String(res.error.message), code: 127 };
   return {
     stdout: res.stdout ?? "",
@@ -37,6 +43,7 @@ function shortHead(dir) {
 function hasCmd(cmd) {
   return runCmd(cmd, ["--version"]).code === 0;
 }
+var escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 // lib/config.mjs
 import { readFileSync, existsSync, appendFileSync } from "node:fs";
@@ -2404,323 +2411,6 @@ var import_js_yaml = /* @__PURE__ */ __toESM((/* @__PURE__ */ __commonJSMin(((ex
 var { Type, Schema, FAILSAFE_SCHEMA, JSON_SCHEMA, CORE_SCHEMA, DEFAULT_SCHEMA, load, loadAll, dump, YAMLException, types, safeLoad, safeLoadAll, safeDump } = import_js_yaml.default;
 var index_vite_proxy_tmp_default = import_js_yaml.default;
 
-// lib/config.mjs
-var DEFAULTS = {
-  ignore: ["**/*.lock", "**/*.generated.*", "vendor/**", "node_modules/**"],
-  min_severity: "low",
-  strictness: 2,
-  max_findings: 50,
-  categories: ["logic", "security", "perf", "style", "docs", "tests"],
-  min_confidence: 2,
-  max_diff_lines: 2e3,
-  max_files: 100,
-  output: { show_whats_good: true, show_diff_stats: true, color: "auto" }
-};
-function loadConfig(repoDir) {
-  const warnings = [];
-  const file = join(repoDir, ".anchor", "config.yaml");
-  let raw = {};
-  if (existsSync(file)) {
-    try {
-      raw = index_vite_proxy_tmp_default.load(readFileSync(file, "utf8")) ?? {};
-      if (typeof raw !== "object" || Array.isArray(raw)) raw = {};
-    } catch (e) {
-      const line = e?.mark ? ` at line ${e.mark.line + 1}` : "";
-      warnings.push(`anchor: .anchor/config.yaml is invalid YAML${line}. Using defaults.`);
-      raw = {};
-    }
-  }
-  if (raw.strictness !== void 0 && ![1, 2, 3].includes(raw.strictness)) {
-    warnings.push(
-      `anchor: strictness must be 1, 2, or 3. Got ${JSON.stringify(raw.strictness)}. Using 2 (balanced).`
-    );
-    delete raw.strictness;
-  }
-  if (raw.ignore !== void 0 && !Array.isArray(raw.ignore)) {
-    warnings.push(`anchor: ignore must be a list. Got ${JSON.stringify(raw.ignore)}. Using defaults.`);
-    delete raw.ignore;
-  }
-  if (raw.categories !== void 0 && !Array.isArray(raw.categories)) {
-    warnings.push(`anchor: categories must be a list. Got ${JSON.stringify(raw.categories)}. Using defaults.`);
-    delete raw.categories;
-  }
-  for (const key of ["max_findings", "min_confidence", "max_diff_lines", "max_files"]) {
-    if (raw[key] !== void 0 && !Number.isInteger(raw[key])) {
-      warnings.push(`anchor: ${key} must be an integer. Got ${JSON.stringify(raw[key])}. Using ${DEFAULTS[key]}.`);
-      delete raw[key];
-    }
-  }
-  const config = {
-    ...DEFAULTS,
-    ...raw,
-    ignore: Array.isArray(raw.ignore) ? raw.ignore : [...DEFAULTS.ignore],
-    categories: Array.isArray(raw.categories) ? raw.categories : [...DEFAULTS.categories],
-    output: { ...DEFAULTS.output, ...raw.output ?? {} }
-  };
-  return { config, warnings };
-}
-var GITIGNORE_BLOCK = [
-  "# Anchor (personal code review state)",
-  ".anchor/config.yaml",
-  ".anchor/codebase-map.md",
-  ".anchor/codebase-graph.md",
-  ".anchor/learnings.md",
-  ".anchor/reviews/"
-];
-function ensureGitignore(repoDir) {
-  const file = join(repoDir, ".gitignore");
-  const existing = existsSync(file) ? readFileSync(file, "utf8") : "";
-  const lines = new Set(existing.split("\n"));
-  const missing = GITIGNORE_BLOCK.filter((l) => !lines.has(l));
-  if (missing.length === 0) return { added: false };
-  const sep2 = existing.length && !existing.endsWith("\n") ? "\n" : "";
-  appendFileSync(file, `${sep2}${missing.join("\n")}
-`);
-  return { added: true };
-}
-
-// lib/doctor.mjs
-function runDoctor({ cwd = process.cwd() } = {}) {
-  const checks = [];
-  const add = (name, ok2, message, opts = {}) => {
-    const { level = "error", fix } = opts;
-    checks.push({ name, ok: ok2, level, message, ...ok2 ? {} : { fix } });
-  };
-  const gitV = runGit(["--version"]);
-  const gitMajor = Number(/git version (\d+)/.exec(gitV.stdout)?.[1] ?? 0);
-  const gitOk = gitV.code === 0 && gitMajor >= 2;
-  add("git", gitOk, gitOk ? gitV.stdout.trim() : "git not found or too old", {
-    fix: "Install git >= 2.0"
-  });
-  const ghV = runCmd("gh", ["--version"]);
-  add("gh", ghV.code === 0, ghV.code === 0 ? ghV.stdout.split("\n")[0] : "gh not found (only required for PR mode)", {
-    level: "warn",
-    fix: "Install from https://cli.github.com"
-  });
-  const inRepo = isGitRepo(cwd);
-  add("repo", inRepo, inRepo ? "inside a git repository" : "not a git repository", {
-    fix: "Run from inside a repo"
-  });
-  const pkgRoot = fileURLToPath(new URL("..", import.meta.url));
-  const underPluginCache = pkgRoot.includes(join2(".claude", "plugins", "cache"));
-  const bundlePath = join2(pkgRoot, "dist", "anchor.mjs");
-  const bundleOk = existsSync2(bundlePath);
-  add("bundle", bundleOk, bundleOk ? `${bundlePath} present` : `${bundlePath} missing`, {
-    level: underPluginCache ? "error" : "warn",
-    // missing bundle in a plugin install = broken release
-    fix: "Run /plugin update anchor (or `make bundle` in a dev checkout)"
-  });
-  add(
-    "plugin install",
-    underPluginCache,
-    underPluginCache ? `running from plugin cache (${pkgRoot})` : `running from source checkout (dev mode): ${pkgRoot}`,
-    { level: "warn", fix: "Install via /plugin install anchor@mjenkins-toolbox for normal use" }
-  );
-  const { warnings } = loadConfig(cwd);
-  add("config", warnings.length === 0, warnings.length === 0 ? ".anchor/config.yaml ok (or absent)" : warnings.join("; "), {
-    level: "warn",
-    fix: "Fix .anchor/config.yaml"
-  });
-  const inClaude = process.env.CLAUDECODE === "1";
-  add("claude code", inClaude, inClaude ? "session active" : "no active Claude Code session detected", {
-    level: "warn",
-    fix: "Run inside Claude Code for review workflows"
-  });
-  const major = Number(process.version.slice(1).split(".")[0]);
-  add("node", major >= 18, `node ${process.version}`, { fix: "Install Node 18+" });
-  const ok = checks.every((c) => c.ok || c.level === "warn");
-  return { ok, checks };
-}
-
-// lib/diff.mjs
-import { readFileSync as readFileSync2, existsSync as existsSync3 } from "node:fs";
-import { join as join3 } from "node:path";
-function parseTarget(tokens = []) {
-  const t = tokens.filter((x) => !x.startsWith("--"));
-  if (t.length === 0) return { mode: "uncommitted" };
-  if (t[0] === "uncommitted") return { mode: "uncommitted" };
-  if (t[0] === "staged") return { mode: "staged" };
-  if (t[0] === "pr") {
-    const selector = t[1] ?? "";
-    if (!selector) throw new Error("anchor: pr mode needs a number or URL, e.g. `anchor diff pr 123`");
-    return { mode: "pr", selector };
-  }
-  if (t[0].startsWith("@")) return { mode: "file", path: t[0].slice(1) };
-  if (t[0].includes("..")) {
-    const [ref1, ref2] = t[0].split(/\.{2,3}/);
-    return { mode: "ref-diff", ref1, ref2, range: t[0] };
-  }
-  throw new Error(`anchor: unrecognized target "${t[0]}"`);
-}
-function parseUnifiedDiff(text) {
-  const files = [];
-  let file = null;
-  let pending = null;
-  let oldPath = null;
-  let hunk = null;
-  let remOld = 0;
-  let remNew = 0;
-  const flush = () => {
-    if (pending && !file) {
-      files.push({ path: pending.newGit, added: 0, removed: 0, hunks: [], ...pending.flags });
-    }
-    pending = null;
-    file = null;
-    oldPath = null;
-    hunk = null;
-    remOld = remNew = 0;
-  };
-  for (const line of text.split("\n")) {
-    if (hunk && (remOld > 0 || remNew > 0)) {
-      if (line.startsWith("\\")) continue;
-      hunk.body += line + "\n";
-      const c = line[0];
-      if (c === "+") {
-        remNew--;
-        file.added++;
-      } else if (c === "-") {
-        remOld--;
-        file.removed++;
-      } else {
-        remOld--;
-        remNew--;
-      }
-      continue;
-    }
-    const dg = /^diff --git a\/(.+) b\/(.+)$/.exec(line);
-    if (dg) {
-      flush();
-      pending = { oldGit: dg[1], newGit: dg[2], flags: {} };
-      continue;
-    }
-    if (pending) {
-      if (line.startsWith("Binary files ")) pending.flags.binary = true;
-      else if (line.startsWith("rename from ")) pending.flags.renamedFrom = line.slice("rename from ".length);
-      else if (line.startsWith("old mode ")) pending.flags.modeChange = true;
-    }
-    if (line.startsWith("--- ")) {
-      oldPath = line.slice(4).replace(/^a\//, "");
-      continue;
-    }
-    if (line.startsWith("+++ ")) {
-      const newPath = line.slice(4).replace(/^b\//, "");
-      file = {
-        path: newPath === "/dev/null" ? oldPath : newPath,
-        added: 0,
-        removed: 0,
-        hunks: [],
-        ...pending?.flags ?? {}
-      };
-      files.push(file);
-      pending = null;
-      oldPath = null;
-      hunk = null;
-      continue;
-    }
-    const m = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/.exec(line);
-    if (m && file) {
-      hunk = {
-        oldStart: Number(m[1]),
-        oldLines: m[2] === void 0 ? 1 : Number(m[2]),
-        newStart: Number(m[3]),
-        newLines: m[4] === void 0 ? 1 : Number(m[4]),
-        body: ""
-      };
-      remOld = hunk.oldLines;
-      remNew = hunk.newLines;
-      file.hunks.push(hunk);
-    }
-  }
-  flush();
-  return files;
-}
-function withStats(result) {
-  const stats = result.files.reduce(
-    (s, f) => ({
-      totalAdded: s.totalAdded + f.added,
-      totalRemoved: s.totalRemoved + f.removed,
-      fileCount: s.fileCount + 1
-    }),
-    { totalAdded: 0, totalRemoved: 0, fileCount: 0 }
-  );
-  return { ...result, stats };
-}
-function getDiff(tokens, { cwd = process.cwd(), env } = {}) {
-  const staged = tokens.includes("--staged");
-  const target = staged ? { mode: "staged" } : parseTarget(tokens);
-  if (target.mode === "file") return fileMode(target, cwd);
-  if (target.mode === "pr") return prMode(target, cwd, env);
-  if (target.mode === "uncommitted" && runGit(["rev-parse", "--verify", "HEAD"], { cwd, env }).code !== 0) {
-    throw new Error("anchor: no commits yet in this repository (nothing to diff against HEAD). Stage files and use --staged.");
-  }
-  let raw;
-  if (target.mode === "uncommitted") {
-    const untracked = runGit(["ls-files", "--others", "--exclude-standard"], { cwd, env }).stdout.split("\n").filter(Boolean);
-    if (untracked.length > 0) runGit(["add", "-N", "--", ...untracked], { cwd, env });
-    try {
-      raw = runGit(["diff", "HEAD"], { cwd, env });
-    } finally {
-      if (untracked.length > 0) runGit(["restore", "--staged", "--", ...untracked], { cwd, env });
-    }
-  } else if (target.mode === "staged") raw = runGit(["diff", "--cached"], { cwd, env });
-  else raw = runGit(["diff", target.range], { cwd, env });
-  if (raw.code !== 0) throw new Error(`anchor: git diff failed: ${raw.stderr.trim()}`);
-  return withStats({
-    mode: target.mode,
-    ...target.ref1 ? { ref1: target.ref1, ref2: target.ref2 } : {},
-    files: parseUnifiedDiff(raw.stdout)
-  });
-}
-function fileMode(target, cwd) {
-  const abs = join3(cwd, target.path);
-  if (!existsSync3(abs)) throw new Error(`anchor: file not found: ${target.path}`);
-  const body = readFileSync2(abs, "utf8");
-  const n = body === "" ? 0 : body.endsWith("\n") ? body.split("\n").length - 1 : body.split("\n").length;
-  return withStats({
-    mode: "file",
-    files: [{
-      path: target.path,
-      added: n,
-      removed: 0,
-      hunks: [{ oldStart: 0, oldLines: 0, newStart: 1, newLines: n, body }]
-    }]
-  });
-}
-function prMode(target, cwd, env) {
-  if (runCmd("gh", ["--version"], { env }).code !== 0) {
-    throw new Error("anchor: PR mode requires the `gh` CLI. Install from https://cli.github.com.");
-  }
-  const view = runCmd(
-    "gh",
-    ["pr", "view", target.selector, "--json", "number,url"],
-    { cwd, env }
-  );
-  if (view.code !== 0) {
-    if (/not logged in|authentication required|no credentials|gh auth login/i.test(view.stderr)) {
-      throw new Error("anchor: `gh` is not authenticated. Run `gh auth login` first.");
-    }
-    throw new Error(`anchor: gh pr view failed: ${view.stderr.trim()}`);
-  }
-  let meta;
-  try {
-    meta = JSON.parse(view.stdout);
-  } catch {
-    throw new Error(`anchor: gh pr view returned unexpected output: ${view.stdout.trim().slice(0, 120)}`);
-  }
-  const diff = runCmd("gh", ["pr", "diff", target.selector], { cwd, env });
-  if (diff.code !== 0) throw new Error(`anchor: gh pr diff failed: ${diff.stderr.trim()}`);
-  return withStats({
-    mode: "pr",
-    prNumber: String(meta.number),
-    prUrl: meta.url,
-    files: parseUnifiedDiff(diff.stdout)
-  });
-}
-
-// lib/context.mjs
-import { readFileSync as readFileSync3, existsSync as existsSync4, statSync } from "node:fs";
-import { join as join4, dirname, basename, extname, normalize as normalize2 } from "node:path";
-
 // node_modules/.pnpm/balanced-match@4.0.4/node_modules/balanced-match/dist/esm/index.js
 var balanced = (a, b, str) => {
   const ma = a instanceof RegExp ? maybeMatch(a, str) : a;
@@ -4543,6 +4233,437 @@ function filterIgnored(paths, patterns = []) {
   const matchers = patterns.map((p) => new Minimatch(p, { dot: true }));
   return paths.filter((p) => !matchers.some((m) => m.match(normalize(p))));
 }
+function isValidGlob(glob) {
+  try {
+    new Minimatch(glob, { dot: true });
+    return true;
+  } catch {
+    return false;
+  }
+}
+function matchesScope(scope, changedPaths) {
+  let mm;
+  try {
+    mm = new Minimatch(scope ?? "**", { dot: true });
+  } catch {
+    return false;
+  }
+  return changedPaths.some((p) => mm.match(normalize(String(p))));
+}
+
+// lib/config.mjs
+var DEFAULTS = {
+  ignore: ["**/*.lock", "**/*.generated.*", "vendor/**", "node_modules/**", "**/dist/**", "**/build/**", "**/coverage/**"],
+  min_severity: "low",
+  strictness: 2,
+  max_findings: 50,
+  categories: ["logic", "security", "perf", "style", "docs", "tests"],
+  protected_categories: ["security", "data-loss", "crash", "injection", "auth"],
+  rules: [],
+  min_confidence: 2,
+  max_diff_lines: 15e3,
+  max_files: 100,
+  output: { show_whats_good: true, show_diff_stats: true, color: "auto" }
+};
+var SEVERITIES = ["critical", "high", "medium", "low"];
+var CATEGORIES = ["logic", "security", "perf", "style", "docs", "tests"];
+var COLORS = ["auto", "always", "never"];
+var BOUNDS = { max_findings: [1, Infinity], min_confidence: [0, 5], max_diff_lines: [1, Infinity], max_files: [1, Infinity] };
+function loadConfig(repoDir) {
+  const warnings = [];
+  const file = join(repoDir, ".anchor", "config.yaml");
+  let raw = {};
+  if (existsSync(file)) {
+    try {
+      raw = index_vite_proxy_tmp_default.load(readFileSync(file, "utf8")) ?? {};
+      if (typeof raw !== "object" || Array.isArray(raw)) raw = {};
+    } catch (e) {
+      const line = e?.mark ? ` at line ${e.mark.line + 1}` : "";
+      warnings.push(`anchor: .anchor/config.yaml is invalid YAML${line}. Using defaults.`);
+      raw = {};
+    }
+  }
+  if (raw.strictness !== void 0 && ![1, 2, 3].includes(raw.strictness)) {
+    warnings.push(
+      `anchor: strictness must be 1, 2, or 3. Got ${JSON.stringify(raw.strictness)}. Using 2 (balanced).`
+    );
+    delete raw.strictness;
+  }
+  if (raw.ignore !== void 0 && !Array.isArray(raw.ignore)) {
+    warnings.push(`anchor: ignore must be a list. Got ${JSON.stringify(raw.ignore)}. Using defaults.`);
+    delete raw.ignore;
+  }
+  if (raw.categories !== void 0 && !Array.isArray(raw.categories)) {
+    warnings.push(`anchor: categories must be a list. Got ${JSON.stringify(raw.categories)}. Using defaults.`);
+    delete raw.categories;
+  }
+  for (const key of ["max_findings", "min_confidence", "max_diff_lines", "max_files"]) {
+    if (raw[key] !== void 0 && !Number.isInteger(raw[key])) {
+      warnings.push(`anchor: ${key} must be an integer. Got ${JSON.stringify(raw[key])}. Using ${DEFAULTS[key]}.`);
+      delete raw[key];
+    }
+  }
+  for (const [key, [lo, hi]] of Object.entries(BOUNDS)) {
+    if (Number.isInteger(raw[key]) && (raw[key] < lo || raw[key] > hi)) {
+      warnings.push(`anchor: ${key} must be between ${lo} and ${hi}. Got ${raw[key]}. Using ${DEFAULTS[key]}.`);
+      delete raw[key];
+    }
+  }
+  if (raw.min_severity !== void 0 && !SEVERITIES.includes(raw.min_severity)) {
+    warnings.push(`anchor: min_severity must be one of ${SEVERITIES.join(", ")}. Got ${JSON.stringify(raw.min_severity)}. Using low.`);
+    delete raw.min_severity;
+  }
+  if (Array.isArray(raw.categories)) {
+    const bad = raw.categories.filter((c) => !CATEGORIES.includes(c));
+    if (bad.length) {
+      warnings.push(`anchor: unknown categories ${JSON.stringify(bad)}. Allowed: ${CATEGORIES.join(", ")}. Dropping them.`);
+      raw.categories = raw.categories.filter((c) => CATEGORIES.includes(c));
+      if (raw.categories.length === 0) {
+        warnings.push("anchor: all categories were invalid. Using defaults (all).");
+        delete raw.categories;
+      }
+    }
+  }
+  if (raw.output !== void 0 && (typeof raw.output !== "object" || Array.isArray(raw.output))) {
+    warnings.push(`anchor: output must be a mapping. Got ${JSON.stringify(raw.output)}. Using defaults.`);
+    delete raw.output;
+  }
+  if (raw.output && raw.output.color !== void 0 && !COLORS.includes(raw.output.color)) {
+    warnings.push(`anchor: output.color must be one of ${COLORS.join(", ")}. Got ${JSON.stringify(raw.output.color)}. Using auto.`);
+    delete raw.output.color;
+  }
+  if (raw.protected_categories !== void 0 && !Array.isArray(raw.protected_categories)) {
+    warnings.push(`anchor: protected_categories must be a list. Got ${JSON.stringify(raw.protected_categories)}. Using defaults.`);
+    delete raw.protected_categories;
+  }
+  if (raw.rules !== void 0) {
+    if (!Array.isArray(raw.rules)) {
+      warnings.push(`anchor: rules must be a list. Got ${JSON.stringify(raw.rules)}. Ignoring.`);
+      delete raw.rules;
+    } else {
+      raw.rules = raw.rules.filter((r) => {
+        if (!r || typeof r.rule !== "string") {
+          warnings.push(`anchor: each rule needs a string "rule". Dropping ${JSON.stringify(r)}.`);
+          return false;
+        }
+        if (r.scope !== void 0 && !isValidGlob(r.scope)) {
+          warnings.push(`anchor: rule ${JSON.stringify(r.id ?? r.rule)} has an invalid scope glob ${JSON.stringify(r.scope)}. Dropping it.`);
+          return false;
+        }
+        return true;
+      });
+    }
+  }
+  const config = {
+    ...DEFAULTS,
+    ...raw,
+    ignore: Array.isArray(raw.ignore) ? raw.ignore : [...DEFAULTS.ignore],
+    categories: Array.isArray(raw.categories) ? raw.categories : [...DEFAULTS.categories],
+    protected_categories: Array.isArray(raw.protected_categories) ? raw.protected_categories : [...DEFAULTS.protected_categories],
+    rules: Array.isArray(raw.rules) ? raw.rules : [...DEFAULTS.rules],
+    output: { ...DEFAULTS.output, ...raw.output ?? {} }
+  };
+  return { config, warnings };
+}
+var GITIGNORE_BLOCK = [
+  "# Anchor (personal code review state)",
+  ".anchor/config.yaml",
+  ".anchor/codebase-map.md",
+  ".anchor/codebase-graph.md",
+  ".anchor/learnings.md",
+  ".anchor/reviews/"
+];
+function ensureGitignore(repoDir) {
+  const file = join(repoDir, ".gitignore");
+  const existing = existsSync(file) ? readFileSync(file, "utf8") : "";
+  const lines = new Set(existing.split("\n").map((l) => l.trim()));
+  const missing = GITIGNORE_BLOCK.filter((l) => !lines.has(l));
+  if (missing.length === 0) return { added: false };
+  const sep3 = existing.length && !existing.endsWith("\n") ? "\n" : "";
+  appendFileSync(file, `${sep3}${missing.join("\n")}
+`);
+  return { added: true };
+}
+
+// lib/doctor.mjs
+function runDoctor({ cwd = process.cwd() } = {}) {
+  const checks = [];
+  const add = (name, ok2, message, opts = {}) => {
+    const { level = "error", fix } = opts;
+    checks.push({ name, ok: ok2, level, message, ...ok2 ? {} : { fix } });
+  };
+  const gitV = runGit(["--version"]);
+  const gitMajor = Number(/git version (\d+)/.exec(gitV.stdout)?.[1] ?? 0);
+  const gitOk = gitV.code === 0 && gitMajor >= 2;
+  add("git", gitOk, gitOk ? gitV.stdout.trim() : "git not found or too old", {
+    fix: "Install git >= 2.0"
+  });
+  const ghV = runCmd("gh", ["--version"]);
+  add("gh", ghV.code === 0, ghV.code === 0 ? ghV.stdout.split("\n")[0] : "gh not found (only required for PR mode)", {
+    level: "warn",
+    fix: "Install from https://cli.github.com"
+  });
+  const inRepo = isGitRepo(cwd);
+  add("repo", inRepo, inRepo ? "inside a git repository" : "not a git repository", {
+    fix: "Run from inside a repo"
+  });
+  const pkgRoot = fileURLToPath(new URL("..", import.meta.url));
+  const underPluginCache = pkgRoot.includes(join2(".claude", "plugins", "cache"));
+  const bundlePath = join2(pkgRoot, "dist", "anchor.mjs");
+  const bundleOk = existsSync2(bundlePath);
+  add("bundle", bundleOk, bundleOk ? `${bundlePath} present` : `${bundlePath} missing`, {
+    level: underPluginCache ? "error" : "warn",
+    // missing bundle in a plugin install = broken release
+    fix: "Run /plugin update anchor (or `make bundle` in a dev checkout)"
+  });
+  add(
+    "plugin install",
+    underPluginCache,
+    underPluginCache ? `running from plugin cache (${pkgRoot})` : `running from source checkout (dev mode): ${pkgRoot}`,
+    { level: "warn", fix: "Install via /plugin install anchor@mjenkins-toolbox for normal use" }
+  );
+  const { warnings } = loadConfig(cwd);
+  add("config", warnings.length === 0, warnings.length === 0 ? ".anchor/config.yaml ok (or absent)" : warnings.join("; "), {
+    level: "warn",
+    fix: "Fix .anchor/config.yaml"
+  });
+  const inClaude = process.env.CLAUDECODE === "1";
+  add("claude code", inClaude, inClaude ? "session active" : "no active Claude Code session detected", {
+    level: "warn",
+    fix: "Run inside Claude Code for review workflows"
+  });
+  const major = Number(process.version.slice(1).split(".")[0]);
+  add("node", major >= 18, `node ${process.version}`, { fix: "Install Node 18+" });
+  const ok = checks.every((c) => c.ok || c.level === "warn");
+  return { ok, checks };
+}
+
+// lib/diff.mjs
+import { readFileSync as readFileSync2, existsSync as existsSync3 } from "node:fs";
+import { join as join3 } from "node:path";
+function parseTarget(tokens = []) {
+  const t = tokens.filter((x) => !x.startsWith("--"));
+  if (t.length === 0) return { mode: "uncommitted" };
+  if (t[0] === "uncommitted") return { mode: "uncommitted" };
+  if (t[0] === "staged") return { mode: "staged" };
+  if (t[0] === "pr") {
+    const selector = t[1] ?? "";
+    if (!selector) throw new Error("anchor: pr mode needs a number or URL, e.g. `anchor diff pr 123`");
+    return { mode: "pr", selector };
+  }
+  if (t[0].startsWith("@")) return { mode: "file", path: t[0].slice(1) };
+  if (t[0].includes("..")) {
+    const [ref1, ref2] = t[0].split(/\.{2,3}/);
+    return { mode: "ref-diff", ref1, ref2, range: t[0] };
+  }
+  throw new Error(`anchor: unrecognized target "${t[0]}"`);
+}
+function parseUnifiedDiff(text) {
+  const files = [];
+  let file = null;
+  let pending = null;
+  let oldPath = null;
+  let hunk = null;
+  let remOld = 0;
+  let remNew = 0;
+  const flush = () => {
+    if (pending && !file) {
+      files.push({ path: pending.newGit, added: 0, removed: 0, hunks: [], ...pending.flags });
+    }
+    pending = null;
+    file = null;
+    oldPath = null;
+    hunk = null;
+    remOld = remNew = 0;
+  };
+  for (const line of text.split("\n")) {
+    if (hunk && (remOld > 0 || remNew > 0) && !line.startsWith("diff --git ")) {
+      if (line.startsWith("\\")) continue;
+      hunk.body += line + "\n";
+      const c = line[0];
+      if (c === "+") {
+        remNew--;
+        file.added++;
+      } else if (c === "-") {
+        remOld--;
+        file.removed++;
+      } else {
+        remOld--;
+        remNew--;
+      }
+      continue;
+    }
+    const dg = /^diff --git a\/(.+) b\/(.+)$/.exec(line);
+    if (dg) {
+      flush();
+      pending = { oldGit: dg[1], newGit: dg[2], flags: {} };
+      continue;
+    }
+    if (pending) {
+      if (line.startsWith("Binary files ")) pending.flags.binary = true;
+      else if (line.startsWith("rename from ")) pending.flags.renamedFrom = line.slice("rename from ".length);
+      else if (line.startsWith("old mode ")) pending.flags.modeChange = true;
+    }
+    if (line.startsWith("--- ")) {
+      oldPath = line.slice(4).replace(/^a\//, "");
+      continue;
+    }
+    if (line.startsWith("+++ ")) {
+      const newPath = line.slice(4).replace(/^b\//, "");
+      file = {
+        path: newPath === "/dev/null" ? oldPath : newPath,
+        added: 0,
+        removed: 0,
+        hunks: [],
+        ...pending?.flags ?? {}
+      };
+      files.push(file);
+      pending = null;
+      oldPath = null;
+      hunk = null;
+      continue;
+    }
+    const m = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/.exec(line);
+    if (m && file) {
+      hunk = {
+        oldStart: Number(m[1]),
+        oldLines: m[2] === void 0 ? 1 : Number(m[2]),
+        newStart: Number(m[3]),
+        newLines: m[4] === void 0 ? 1 : Number(m[4]),
+        body: ""
+      };
+      remOld = hunk.oldLines;
+      remNew = hunk.newLines;
+      file.hunks.push(hunk);
+    }
+  }
+  flush();
+  return files;
+}
+function applyBudget(result, { maxLines, maxFiles, force = false, fallbackLines = 15e3, fallbackFiles = 100 }) {
+  const lines = Number.isFinite(maxLines) ? maxLines : fallbackLines;
+  const files = Number.isFinite(maxFiles) ? maxFiles : fallbackFiles;
+  const totalLines = result.files.reduce((s, f) => s + f.added + f.removed, 0);
+  const reasons = [];
+  if (totalLines > lines) {
+    reasons.push(`${totalLines.toLocaleString()} change-lines (budget ${lines.toLocaleString()})`);
+  }
+  if (result.files.length > files) {
+    reasons.push(`${result.files.length.toLocaleString()} files (budget ${files.toLocaleString()})`);
+  }
+  if (force || reasons.length === 0) return result;
+  return {
+    ...result,
+    overBudget: true,
+    budgetWarning: `anchor: diff exceeds budget \u2014 ${reasons.join("; ")}. Reviewing anyway; prioritize the most important files. Use --force to silence, --max-diff-lines N to raise the budget, or split the change.`
+  };
+}
+function withStats(result) {
+  const stats = result.files.reduce(
+    (s, f) => ({
+      totalAdded: s.totalAdded + f.added,
+      totalRemoved: s.totalRemoved + f.removed,
+      fileCount: s.fileCount + 1
+    }),
+    { totalAdded: 0, totalRemoved: 0, fileCount: 0 }
+  );
+  return { ...result, stats };
+}
+function getDiff(tokens, { cwd = process.cwd(), env } = {}) {
+  const staged = tokens.includes("--staged");
+  const target = staged ? { mode: "staged" } : parseTarget(tokens);
+  if (target.mode === "file") return fileMode(target, cwd);
+  if (target.mode === "pr") return prMode(target, cwd, env);
+  if (target.mode === "uncommitted" && runGit(["rev-parse", "--verify", "HEAD"], { cwd, env }).code !== 0) {
+    throw new Error("anchor: no commits yet in this repository (nothing to diff against HEAD). Stage files and use --staged.");
+  }
+  let raw;
+  if (target.mode === "uncommitted") {
+    const untracked = runGit(["ls-files", "--others", "--exclude-standard"], { cwd, env }).stdout.split("\n").filter(Boolean);
+    if (untracked.length > 0) runGit(["add", "-N", "--", ...untracked], { cwd, env });
+    try {
+      raw = runGit(["diff", "HEAD"], { cwd, env });
+    } finally {
+      if (untracked.length > 0) runGit(["restore", "--staged", "--", ...untracked], { cwd, env });
+    }
+  } else if (target.mode === "staged") raw = runGit(["diff", "--cached"], { cwd, env });
+  else raw = runGit(["diff", target.range], { cwd, env });
+  if (raw.code !== 0) throw new Error(`anchor: git diff failed: ${raw.stderr.trim()}`);
+  return withStats({
+    mode: target.mode,
+    ...target.ref1 ? { ref1: target.ref1, ref2: target.ref2 } : {},
+    files: parseUnifiedDiff(raw.stdout)
+  });
+}
+function fileMode(target, cwd) {
+  const abs = join3(cwd, target.path);
+  if (!existsSync3(abs)) throw new Error(`anchor: file not found: ${target.path}`);
+  const body = readFileSync2(abs, "utf8");
+  const n = body === "" ? 0 : body.endsWith("\n") ? body.split("\n").length - 1 : body.split("\n").length;
+  return withStats({
+    mode: "file",
+    files: [{
+      path: target.path,
+      added: n,
+      removed: 0,
+      hunks: [{ oldStart: 0, oldLines: 0, newStart: 1, newLines: n, body }]
+    }]
+  });
+}
+function prMode(target, cwd, env) {
+  if (runCmd("gh", ["--version"], { env }).code !== 0) {
+    throw new Error("anchor: PR mode requires the `gh` CLI. Install from https://cli.github.com.");
+  }
+  const view = runCmd(
+    "gh",
+    ["pr", "view", target.selector, "--json", "number,url"],
+    { cwd, env, timeout: 12e4 }
+    // large PRs can be slow; override the 30s default
+  );
+  if (view.code !== 0) {
+    if (/not logged in|authentication required|no credentials|gh auth login/i.test(view.stderr)) {
+      throw new Error("anchor: `gh` is not authenticated. Run `gh auth login` first.");
+    }
+    throw new Error(`anchor: gh pr view failed: ${view.stderr.trim()}`);
+  }
+  let meta;
+  try {
+    meta = JSON.parse(view.stdout);
+  } catch {
+    throw new Error(`anchor: gh pr view returned unexpected output: ${view.stdout.trim().slice(0, 120)}`);
+  }
+  const diff = runCmd("gh", ["pr", "diff", target.selector], { cwd, env, timeout: 12e4 });
+  if (diff.code !== 0) throw new Error(`anchor: gh pr diff failed: ${diff.stderr.trim()}`);
+  return withStats({
+    mode: "pr",
+    prNumber: String(meta.number),
+    prUrl: meta.url,
+    files: parseUnifiedDiff(diff.stdout)
+  });
+}
+
+// lib/context.mjs
+import { readFileSync as readFileSync4, existsSync as existsSync5, statSync } from "node:fs";
+import { join as join5, dirname, basename, extname, normalize as normalize2 } from "node:path";
+
+// lib/manifest.mjs
+import { readFileSync as readFileSync3, existsSync as existsSync4 } from "node:fs";
+import { join as join4 } from "node:path";
+function selectManifest(entries, changedPaths) {
+  return (entries ?? []).filter((e) => matchesScope(e.scope, changedPaths));
+}
+function loadManifest(repoDir) {
+  const f = join4(repoDir, ".anchor", "files.json");
+  if (!existsSync4(f)) return [];
+  let raw;
+  try {
+    raw = JSON.parse(readFileSync3(f, "utf8"));
+  } catch {
+    return [];
+  }
+  if (!Array.isArray(raw)) return [];
+  return raw.filter((e) => e && typeof e.path === "string").map((e) => ({ path: e.path, description: typeof e.description === "string" ? e.description : "", scope: typeof e.scope === "string" ? e.scope : "**" }));
+}
 
 // lib/context.mjs
 var IMPORT_RE = /(?:import\s[^'"]*['"]([^'"]+)['"]|from\s+['"]([^'"]+)['"]|require\(\s*['"]([^'"]+)['"]\s*\))/g;
@@ -4558,11 +4679,11 @@ function parseImports(src) {
 }
 function resolveImport(repoDir, fromFile, spec) {
   if (!spec.startsWith(".")) return null;
-  const base = normalize2(join4(dirname(fromFile), spec));
+  const base = normalize2(join5(dirname(fromFile), spec));
   if (base.startsWith("..")) return null;
   for (const ext2 of RESOLVE_EXTS) {
     const candidate = base + ext2;
-    const abs = join4(repoDir, candidate);
+    const abs = join5(repoDir, candidate);
     try {
       if (statSync(abs).isFile()) return candidate;
     } catch {
@@ -4570,11 +4691,9 @@ function resolveImport(repoDir, fromFile, spec) {
   }
   return null;
 }
-function escapeRe(s) {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
 function getContext({ files, repoDir, maxFiles = 50, ignore = [] }) {
   const related = /* @__PURE__ */ new Map();
+  const descriptions = /* @__PURE__ */ new Map();
   const changed = new Set(files);
   for (const f of files) {
     const stem = basename(f, extname(f));
@@ -4587,9 +4706,9 @@ function getContext({ files, repoDir, maxFiles = 50, ignore = [] }) {
         if (!changed.has(p) && !related.has(p)) related.set(p, "importer");
       }
     }
-    const abs = join4(repoDir, f);
-    if (existsSync4(abs)) {
-      for (const spec of parseImports(readFileSync3(abs, "utf8"))) {
+    const abs = join5(repoDir, f);
+    if (existsSync5(abs)) {
+      for (const spec of parseImports(readFileSync4(abs, "utf8"))) {
         const resolved = resolveImport(repoDir, f, spec);
         if (resolved && !changed.has(resolved) && !related.has(resolved)) {
           related.set(resolved, "importee");
@@ -4597,13 +4716,23 @@ function getContext({ files, repoDir, maxFiles = 50, ignore = [] }) {
       }
     }
   }
-  const list = filterIgnored([...related.keys()], ignore).slice(0, maxFiles).map((path2) => ({ path: path2, reason: related.get(path2) }));
+  for (const entry of selectManifest(loadManifest(repoDir), files)) {
+    const p = entry.path.replace(/^\.\//, "");
+    if (changed.has(p) || related.has(p) || !existsSync5(join5(repoDir, p))) continue;
+    related.set(p, "manifest");
+    if (entry.description) descriptions.set(p, entry.description);
+  }
+  const list = filterIgnored([...related.keys()], ignore).slice(0, maxFiles).map((path2) => {
+    const reason = related.get(path2);
+    const description = descriptions.get(path2);
+    return description ? { path: path2, reason, description } : { path: path2, reason };
+  });
   return { files: list };
 }
 
 // lib/learn.mjs
-import { readFileSync as readFileSync4, writeFileSync, existsSync as existsSync5, mkdirSync } from "node:fs";
-import { join as join5, dirname as dirname2 } from "node:path";
+import { readFileSync as readFileSync5, writeFileSync, existsSync as existsSync6, mkdirSync } from "node:fs";
+import { join as join6, dirname as dirname2 } from "node:path";
 var HEADER = `# Anchor Learnings
 
 <!--
@@ -4617,39 +4746,70 @@ Manage entries with \`anchor learn add|remove\` to be safe.
 -->
 `;
 function filePath(repoDir) {
-  return join5(repoDir, ".anchor", "learnings.md");
+  return join6(repoDir, ".anchor", "learnings.md");
 }
 function sanitize(text) {
-  return text.replace(/\s*\n\s*/g, " ").replace(/-->/g, "\u2192").trim();
+  return text.replace(/\s+/g, " ").replace(/-->/g, "\u2192").trim();
 }
 function parse(text) {
   const patterns = [];
-  const re = /^### (.+)\n(?:<!-- reason: (.*?) -->\n?)?/gm;
+  const re = /^### (.+)\n(?:<!-- reason: (.*?) -->\n?)?(?:<!-- meta: (\{.*?\}) -->\n?)?/gm;
   for (const m of text.matchAll(re)) {
-    patterns.push({ heading: m[1].trim(), reason: m[2]?.trim() ?? null });
+    let meta = {};
+    if (m[3]) {
+      try {
+        meta = JSON.parse(m[3]) ?? {};
+      } catch {
+        meta = {};
+      }
+    }
+    patterns.push({
+      heading: m[1].trim(),
+      reason: m[2]?.trim() ?? null,
+      scope: typeof meta.scope === "string" && meta.scope ? meta.scope : "**",
+      category: typeof meta.category === "string" ? meta.category : null,
+      action: typeof meta.action === "string" && meta.action ? meta.action : "suppress"
+    });
   }
   return patterns;
+}
+function metaLine(p) {
+  const meta = {};
+  if (p.scope && p.scope !== "**") meta.scope = p.scope;
+  if (p.category) meta.category = p.category;
+  if (p.action && p.action !== "suppress") meta.action = p.action;
+  return Object.keys(meta).length ? `<!-- meta: ${JSON.stringify(meta)} -->
+` : "";
 }
 function serialize(patterns) {
   const body = patterns.map((p) => `### ${p.heading}
 ${p.reason ? `<!-- reason: ${p.reason} -->
-` : ""}`).join("\n");
+` : ""}${metaLine(p)}`).join("\n");
   return `${HEADER}
 ${body}`;
 }
+function selectLearnings(patterns, changedPaths) {
+  return (patterns ?? []).filter((p) => matchesScope(p.scope, changedPaths));
+}
 function listLearnings(repoDir) {
   const f = filePath(repoDir);
-  if (!existsSync5(f)) return { patterns: [] };
-  return { patterns: parse(readFileSync4(f, "utf8")) };
+  if (!existsSync6(f)) return { patterns: [] };
+  return { patterns: parse(readFileSync5(f, "utf8")) };
 }
-function addLearning(repoDir, pattern, reason) {
+function addLearning(repoDir, pattern, reason, meta = {}) {
   const heading = sanitize(pattern ?? "");
   if (!heading) throw new Error("anchor: pattern cannot be empty");
   const { patterns } = listLearnings(repoDir);
   if (patterns.some((p) => p.heading.toLowerCase() === heading.toLowerCase())) {
     return { added: false, deduped: true };
   }
-  patterns.push({ heading, reason: reason ? sanitize(reason) || null : null });
+  patterns.push({
+    heading,
+    reason: reason ? sanitize(reason) || null : null,
+    scope: typeof meta.scope === "string" && meta.scope ? meta.scope : "**",
+    category: typeof meta.category === "string" && meta.category ? meta.category : null,
+    action: typeof meta.action === "string" && meta.action ? meta.action : "suppress"
+  });
   mkdirSync(dirname2(filePath(repoDir)), { recursive: true });
   writeFileSync(filePath(repoDir), serialize(patterns));
   return { added: true, deduped: false };
@@ -4664,9 +4824,167 @@ function removeLearning(repoDir, substring) {
   return { removed };
 }
 
+// lib/analyzers.mjs
+import { extname as extname2, join as join7, isAbsolute, relative, sep as sep2 } from "node:path";
+import { existsSync as existsSync7 } from "node:fs";
+var MAX_FINDINGS = 200;
+function resolveBin(repoDir, bin) {
+  for (const name of [bin, `${bin}.cmd`]) {
+    const local = join7(repoDir, "node_modules", ".bin", name);
+    if (existsSync7(local)) return local;
+  }
+  return hasCmd(bin) ? bin : null;
+}
+var ANALYZERS = [
+  {
+    name: "tsc",
+    bin: "tsc",
+    exts: [".ts", ".tsx"],
+    command: () => ["--noEmit", "--pretty", "false"],
+    parse: (stdout, stderr) => {
+      const out = `${stdout}
+${stderr}`;
+      const re = /^(.+?)\((\d+),\d+\): error (TS\d+): (.+)$/gm;
+      const findings = [];
+      let m;
+      while ((m = re.exec(out)) !== null) {
+        findings.push({
+          rule: m[3],
+          file: m[1],
+          line: Number(m[2]),
+          severity: "high",
+          message: m[4]
+        });
+      }
+      return findings;
+    }
+  },
+  {
+    name: "eslint",
+    bin: "eslint",
+    exts: [".ts", ".tsx", ".js", ".jsx", ".mjs"],
+    command: (files) => ["--format", "json", ...files],
+    parse: (stdout) => {
+      try {
+        return JSON.parse(stdout).flatMap(
+          (f) => f.messages.map((m) => ({
+            rule: m.ruleId ?? "eslint",
+            file: f.filePath,
+            line: m.line,
+            severity: m.severity === 2 ? "high" : "medium",
+            message: m.message
+          }))
+        );
+      } catch {
+        return [];
+      }
+    }
+  },
+  {
+    name: "ruff",
+    bin: "ruff",
+    exts: [".py"],
+    command: (files) => ["check", "--output-format", "json", ...files],
+    parse: (stdout) => {
+      try {
+        return JSON.parse(stdout).map((d) => ({
+          rule: d.code,
+          file: d.filename,
+          line: d.location?.row,
+          severity: "medium",
+          message: d.message
+        }));
+      } catch {
+        return [];
+      }
+    }
+  },
+  {
+    name: "shellcheck",
+    bin: "shellcheck",
+    exts: [".sh", ".bash"],
+    command: (files) => ["--format", "json", ...files],
+    parse: (stdout) => {
+      try {
+        return JSON.parse(stdout).map((d) => ({
+          rule: `SC${d.code}`,
+          file: d.file,
+          line: d.line,
+          severity: d.level === "error" ? "high" : "medium",
+          message: d.message
+        }));
+      } catch {
+        return [];
+      }
+    }
+  }
+];
+function selectAnalyzers(registry, files) {
+  const exts = new Set(files.map((f) => extname2(f)));
+  return registry.filter((a) => a.exts.some((e) => exts.has(e)));
+}
+async function runAnalyzers(registry, { repoDir, files, exec = void 0, resolve = resolveBin }) {
+  const run = exec ?? ((bin, args) => Promise.resolve(runCmd(bin, args, { cwd: repoDir, defaultTimeout: 6e4 })));
+  const changedSet = new Set(files.map((f) => f.replace(/^(\.\/)+/, "")));
+  const selected = selectAnalyzers(registry, files);
+  const tools = [];
+  const findings = [];
+  for (const a of selected) {
+    const matched = files.filter((f) => a.exts.includes(extname2(f)));
+    const bin = exec ? a.bin : resolve(repoDir, a.bin);
+    if (!bin) {
+      tools.push({ name: a.name, ran: false, fileCount: 0, reason: "not installed" });
+      continue;
+    }
+    const r = await run(bin, a.command(matched));
+    tools.push({ name: a.name, ran: true, fileCount: matched.length });
+    for (const f of a.parse(r.stdout ?? "", r.stderr ?? "")) {
+      let file = isAbsolute(f.file) ? relative(repoDir, f.file) : f.file.replace(/^(\.\/)+/, "");
+      file = file.split(sep2).join("/");
+      findings.push({ tool: a.name, ...f, file, changed: changedSet.has(file) });
+    }
+  }
+  findings.sort((x, y) => Number(y.changed) - Number(x.changed));
+  const truncated = findings.length > MAX_FINDINGS;
+  return {
+    tools,
+    findings: findings.slice(0, MAX_FINDINGS),
+    ...truncated ? { truncated: true } : {}
+  };
+}
+async function analyze(repoDir, files) {
+  return runAnalyzers(ANALYZERS, { repoDir, files });
+}
+
+// lib/rules.mjs
+import { readFileSync as readFileSync6, existsSync as existsSync8 } from "node:fs";
+import { join as join8 } from "node:path";
+function selectRules(rules, changedPaths) {
+  return (rules ?? []).filter((r) => matchesScope(r.scope, changedPaths));
+}
+function loadRulesProse(repoDir) {
+  const f = join8(repoDir, ".anchor", "rules.md");
+  return existsSync8(f) ? readFileSync6(f, "utf8") : null;
+}
+function gatherRules({ repoDir, configRules, changedPaths }) {
+  return { prose: loadRulesProse(repoDir), rules: selectRules(configRules, changedPaths) };
+}
+
+// lib/refs.mjs
+var CODE_GLOBS = ["*.ts", "*.tsx", "*.js", "*.jsx", "*.mjs", "*.py", "*.go", "*.rs", "*.java", "*.rb", "*.c", "*.cpp", "*.h"];
+function findRefs(repoDir, symbol, { globs = CODE_GLOBS } = {}) {
+  if (!symbol || !/^[A-Za-z_$][\w$]*$/.test(symbol)) throw new Error("anchor: refs needs a valid identifier");
+  const r = runGit(["grep", "-nwE", escapeRe(symbol), "--", ...globs], { cwd: repoDir });
+  const references = r.stdout.split("\n").filter(Boolean).map((l) => {
+    const m = /^(.+?):(\d+):(.*)$/.exec(l);
+    return m ? { file: m[1], line: Number(m[2]), text: m[3].trim() } : null;
+  }).filter(Boolean);
+  return { symbol, references, count: references.length };
+}
+
 // lib/review.mjs
-import { readFileSync as readFileSync5, writeFileSync as writeFileSync2, mkdirSync as mkdirSync2, existsSync as existsSync6, readdirSync } from "node:fs";
-import { join as join6, basename as basename2, dirname as dirname3 } from "node:path";
+import { readFileSync as readFileSync7, writeFileSync as writeFileSync2, mkdirSync as mkdirSync2, existsSync as existsSync9, readdirSync } from "node:fs";
+import { join as join9, basename as basename2, dirname as dirname3 } from "node:path";
 
 // lib/frontmatter.mjs
 function parseFrontmatter(text) {
@@ -4691,9 +5009,22 @@ ${body}`;
 
 // lib/review.mjs
 function reviewsDir(repoDir) {
-  return join6(repoDir, ".anchor", "reviews");
+  return join9(repoDir, ".anchor", "reviews");
 }
 function extractReviewMeta(content) {
+  const block = /<!--\s*anchor:meta\s*(\{[\s\S]*?\})\s*-->/.exec(content);
+  if (block) {
+    try {
+      const m = JSON.parse(block[1]);
+      if (m && typeof m === "object") {
+        return {
+          score: typeof m.score === "number" ? m.score : null,
+          severities: m.severities && typeof m.severities === "object" ? m.severities : null
+        };
+      }
+    } catch {
+    }
+  }
   const score = /Confidence:\s*(\d+(?:\.\d+)?)\s*\/\s*5/.exec(content);
   const count = (emoji, word) => {
     const m = new RegExp(`${emoji} ${word}\\s*\\((\\d+)\\)`).exec(content);
@@ -4714,7 +5045,7 @@ function extractReviewMeta(content) {
 function saveReview(repoDir, content, meta = {}) {
   const date = meta.date ?? (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
   const sha = meta.sha ?? shortHead(repoDir) ?? "nosha";
-  const path2 = meta.path ?? join6(reviewsDir(repoDir), `${date}-${sha}.md`);
+  const path2 = meta.path ?? join9(reviewsDir(repoDir), `${date}-${sha}.md`);
   mkdirSync2(dirname3(path2), { recursive: true });
   const extracted = extractReviewMeta(content);
   const fm = {
@@ -4729,22 +5060,22 @@ function saveReview(repoDir, content, meta = {}) {
 }
 function listReviews(repoDir) {
   const dir = reviewsDir(repoDir);
-  if (!existsSync6(dir)) return [];
+  if (!existsSync9(dir)) return [];
   return readdirSync(dir).filter((f) => f.endsWith(".md")).map((file) => {
-    const { data } = parseFrontmatter(readFileSync5(join6(dir, file), "utf8"));
-    return { file: join6(dir, file), date: data.date ?? null, sha: data.sha ?? null, target: data.target ?? "", score: data.score ?? null, severities: data.severities ?? null };
+    const { data } = parseFrontmatter(readFileSync7(join9(dir, file), "utf8"));
+    return { file: join9(dir, file), date: data.date ?? null, sha: data.sha ?? null, target: data.target ?? "", score: data.score ?? null, severities: data.severities ?? null };
   }).sort((a, b) => String(b.date ?? "").localeCompare(String(a.date ?? "")) || b.file.localeCompare(a.file));
 }
 function showReview(repoDir, sha) {
   if (!sha || sha.length < 4) return null;
   const match2 = listReviews(repoDir).find((r) => r.sha === sha || basename2(r.file).includes(sha));
   if (!match2) return null;
-  return { content: readFileSync5(match2.file, "utf8") };
+  return { content: readFileSync7(match2.file, "utf8") };
 }
 
 // lib/init.mjs
-import { readFileSync as readFileSync6, existsSync as existsSync7, statSync as statSync2 } from "node:fs";
-import { join as join7, extname as extname2, basename as basename3 } from "node:path";
+import { readFileSync as readFileSync8, existsSync as existsSync10, statSync as statSync2 } from "node:fs";
+import { join as join10, extname as extname3, basename as basename3 } from "node:path";
 var CONVENTIONAL_RE = /^(feat|fix|chore|docs|refactor|test|style|perf|ci|build)(\(.+\))?!?:/;
 var CONFIG_NAMES = /* @__PURE__ */ new Set(["package.json", "tsconfig.json", "Makefile", "pyproject.toml", "Cargo.toml", "go.mod"]);
 function gatherInitData(repoDir, { depth = 100, prLimit = 50, noPrs = false, noGraph = false } = {}) {
@@ -4758,15 +5089,15 @@ function gatherInitData(repoDir, { depth = 100, prLimit = 50, noPrs = false, noG
 }
 function listFiles(repoDir) {
   const out = runGit(["ls-files"], { cwd: repoDir }).stdout.split("\n").filter(Boolean);
-  const anchorignore = join7(repoDir, ".anchorignore");
-  const userPatterns = existsSync7(anchorignore) ? readFileSync6(anchorignore, "utf8").split("\n").map((l) => l.trim()).filter((l) => l && !l.startsWith("#")) : [];
+  const anchorignore = join10(repoDir, ".anchorignore");
+  const userPatterns = existsSync10(anchorignore) ? readFileSync8(anchorignore, "utf8").split("\n").map((l) => l.trim()).filter((l) => l && !l.startsWith("#")) : [];
   return filterIgnored(out, [...DEFAULT_IGNORE_DIRS, ...userPatterns]);
 }
 function buildStructure(repoDir, files, hotFiles) {
   const topLevelDirs = [...new Set(files.filter((f) => f.includes("/")).map((f) => f.split("/")[0]))];
   const languageMix = {};
   for (const f of files) {
-    const ext2 = extname2(f);
+    const ext2 = extname3(f);
     if (ext2) languageMix[ext2] = (languageMix[ext2] ?? 0) + 1;
   }
   const notable = /* @__PURE__ */ new Map();
@@ -4778,7 +5109,7 @@ function buildStructure(repoDir, files, hotFiles) {
       if (!notable.has(f)) notable.set(f, "config");
     }
   }
-  const bySize = files.map((f) => ({ f, size: safeSize(join7(repoDir, f)) })).sort((a, b) => b.size - a.size).slice(0, 5);
+  const bySize = files.map((f) => ({ f, size: safeSize(join10(repoDir, f)) })).sort((a, b) => b.size - a.size).slice(0, 5);
   for (const { f } of bySize) if (!notable.has(f)) notable.set(f, "large");
   for (const { path: path2 } of hotFiles.slice(0, 5)) if (files.includes(path2) && !notable.has(path2)) notable.set(path2, "recently-changed");
   return {
@@ -4854,9 +5185,9 @@ function buildGraph(repoDir, files, hotFiles) {
   const fileSet = new Set(files);
   for (const f of files) {
     if (!/\.(ts|tsx|js|jsx|mjs|py)$/.test(f)) continue;
-    const abs = join7(repoDir, f);
-    if (!existsSync7(abs)) continue;
-    for (const spec of parseImports(readFileSync6(abs, "utf8"))) {
+    const abs = join10(repoDir, f);
+    if (!existsSync10(abs)) continue;
+    for (const spec of parseImports(readFileSync8(abs, "utf8"))) {
       const target = resolveImport(repoDir, f, spec);
       if (!target || !fileSet.has(target)) continue;
       importTargets.set(target, (importTargets.get(target) ?? 0) + 1);
@@ -4910,16 +5241,16 @@ function buildPrs(repoDir, prLimit, warnings) {
 }
 
 // lib/status.mjs
-import { readFileSync as readFileSync7, existsSync as existsSync8 } from "node:fs";
-import { join as join8, basename as basename4 } from "node:path";
+import { readFileSync as readFileSync9, existsSync as existsSync11 } from "node:fs";
+import { join as join11, basename as basename4 } from "node:path";
 function asDateString(v) {
   if (v instanceof Date) return v.toISOString().slice(0, 10);
   return v == null ? null : String(v);
 }
 function artifactInfo(repoDir, name) {
-  const p = join8(repoDir, ".anchor", name);
-  if (!existsSync8(p)) return null;
-  const { data } = parseFrontmatter(readFileSync7(p, "utf8"));
+  const p = join11(repoDir, ".anchor", name);
+  if (!existsSync11(p)) return null;
+  const { data } = parseFrontmatter(readFileSync9(p, "utf8"));
   const built = asDateString(data.built);
   const ageDays = built ? Math.max(0, Math.floor((Date.now() - new Date(built).getTime()) / 864e5)) : null;
   const info = { built, ageDays };
@@ -5022,8 +5353,8 @@ function renderStatusText(s) {
 }
 
 // lib/hook.mjs
-import { existsSync as existsSync9, mkdirSync as mkdirSync3, readFileSync as readFileSync8, writeFileSync as writeFileSync3, rmSync, statSync as statSync3, chmodSync } from "node:fs";
-import { join as join9 } from "node:path";
+import { existsSync as existsSync12, mkdirSync as mkdirSync3, readFileSync as readFileSync10, writeFileSync as writeFileSync3, rmSync, statSync as statSync3, chmodSync } from "node:fs";
+import { join as join12 } from "node:path";
 
 // lib/hook-script.mjs
 var MARKER = "# Anchor pre-push reminder";
@@ -5047,7 +5378,7 @@ exit 0
 
 // lib/hook.mjs
 function gitDirOf(repoDir) {
-  const gitDir = join9(repoDir, ".git");
+  const gitDir = join12(repoDir, ".git");
   try {
     if (statSync3(gitDir).isDirectory()) return gitDir;
   } catch {
@@ -5059,27 +5390,27 @@ function installHook(repoDir, { force = false } = {}) {
   if (!gitDir) {
     throw new Error("anchor: hook install must be run from inside a git repo (worktrees/submodules not supported).");
   }
-  const hookPath = join9(gitDir, "hooks", "pre-push");
-  if (existsSync9(hookPath) && !force) {
+  const hookPath = join12(gitDir, "hooks", "pre-push");
+  if (existsSync12(hookPath) && !force) {
     throw new Error("anchor: .git/hooks/pre-push already exists. Re-run with --force to overwrite.");
   }
-  mkdirSync3(join9(gitDir, "hooks"), { recursive: true });
+  mkdirSync3(join12(gitDir, "hooks"), { recursive: true });
   writeFileSync3(hookPath, PRE_PUSH_SCRIPT, { mode: 493 });
   chmodSync(hookPath, 493);
   return { installed: true, path: hookPath };
 }
 function hookStatus(repoDir) {
-  const hookPath = join9(repoDir, ".git", "hooks", "pre-push");
-  if (!existsSync9(hookPath)) return { installed: false, path: hookPath };
-  const isAnchor = readFileSync8(hookPath, "utf8").includes(MARKER);
+  const hookPath = join12(repoDir, ".git", "hooks", "pre-push");
+  if (!existsSync12(hookPath)) return { installed: false, path: hookPath };
+  const isAnchor = readFileSync10(hookPath, "utf8").includes(MARKER);
   return isAnchor ? { installed: true, path: hookPath } : { installed: false, path: hookPath, foreign: true };
 }
 function uninstallHook(repoDir) {
-  const hookPath = join9(repoDir, ".git", "hooks", "pre-push");
-  if (!existsSync9(hookPath)) {
+  const hookPath = join12(repoDir, ".git", "hooks", "pre-push");
+  if (!existsSync12(hookPath)) {
     return { removed: false, message: "no pre-push hook installed" };
   }
-  if (!readFileSync8(hookPath, "utf8").includes(MARKER)) {
+  if (!readFileSync10(hookPath, "utf8").includes(MARKER)) {
     throw new Error("anchor: existing .git/hooks/pre-push is not Anchor's \u2014 leaving it alone");
   }
   rmSync(hookPath);
@@ -5087,8 +5418,8 @@ function uninstallHook(repoDir) {
 }
 
 // lib/cli.mjs
-var USAGE = `usage: anchor <init|diff|context|review|learn|status|config|doctor|hook> [args] [--format json|text]`;
-var VALUED = /* @__PURE__ */ new Set(["format", "reason", "max-files", "from-diff", "depth", "target"]);
+var USAGE = `usage: anchor <init|diff|context|analyze|rules|refs|review|learn|status|config|doctor|hook> [args] [--format json|text]`;
+var VALUED = /* @__PURE__ */ new Set(["format", "reason", "max-files", "from-diff", "depth", "target", "max-diff-lines", "scope", "category", "action"]);
 function parseArgs(argv) {
   const positional = [];
   const flags = /* @__PURE__ */ new Map();
@@ -5136,6 +5467,14 @@ function loadCfg() {
   for (const w of warnings) process.stderr.write(w + "\n");
   return config;
 }
+function diffTargetTokens(positional, flags) {
+  if (flags.has("from-diff")) {
+    const fd = flags.get("from-diff");
+    return typeof fd === "string" ? [fd, ...positional] : positional;
+  }
+  if (flags.has("staged")) return ["--staged", ...positional];
+  return positional;
+}
 var HANDLERS = {
   doctor(positional, flags) {
     const result = runDoctor({ cwd: process.cwd() });
@@ -5152,50 +5491,79 @@ var HANDLERS = {
     }
     emit(config, flags);
   },
-  diff(positional, flags, rawTokens) {
+  diff(positional, flags) {
     requireRepo();
     const config = loadCfg();
-    const d = getDiff(rawTokens, { cwd: process.cwd() });
+    const tokens = flags.has("staged") ? ["--staged", ...positional] : positional;
+    const d = getDiff(tokens, { cwd: process.cwd() });
     const filtered = d.files.filter((f) => !isIgnored(f.path, config.ignore));
-    const result = withStats({ ...d, files: filtered });
-    const totalLines = result.files.reduce((s, f) => s + f.added + f.removed, 0);
-    if (totalLines > config.max_diff_lines) {
-      throw new Error(
-        `anchor: diff is ${totalLines.toLocaleString()} lines (max is ${config.max_diff_lines.toLocaleString()}). Adjust .anchor/config.yaml -> max_diff_lines, or split the PR.`
-      );
-    }
-    if (result.files.length > config.max_files) {
-      throw new Error(
-        `anchor: diff touches ${result.files.length} files (max is ${config.max_files}). Adjust .anchor/config.yaml -> max_files, or split the PR.`
-      );
-    }
+    const result = applyBudget(withStats({ ...d, files: filtered }), {
+      maxLines: Number(flags.get("max-diff-lines") ?? config.max_diff_lines),
+      maxFiles: Number(flags.get("max-files") ?? config.max_files),
+      force: flags.has("force"),
+      fallbackLines: config.max_diff_lines,
+      fallbackFiles: config.max_files
+    });
+    if (result.budgetWarning) process.stderr.write(result.budgetWarning + "\n");
     emit(result, flags);
   },
   context(positional, flags, rawTokens) {
     requireRepo();
     const config = loadCfg();
     const maxFiles = Number(flags.get("max-files") ?? 50);
-    let files;
-    if (flags.has("from-diff")) {
-      const fd = flags.get("from-diff");
-      const targetTokens = typeof fd === "string" ? [fd, ...positional] : positional;
-      files = getDiff(targetTokens, { cwd: process.cwd() }).files.map((f) => f.path);
-    } else {
-      files = positional;
-    }
+    const files = flags.has("from-diff") || flags.has("staged") ? getDiff(diffTargetTokens(positional, flags), { cwd: process.cwd() }).files.map((f) => f.path) : positional;
     emit(getContext({ files, repoDir: process.cwd(), maxFiles, ignore: config.ignore }), flags);
+  },
+  async analyze(positional, flags) {
+    requireRepo();
+    const config = loadCfg();
+    const files = getDiff(diffTargetTokens(positional, flags), { cwd: process.cwd() }).files.map((f) => f.path).filter((p) => !isIgnored(p, config.ignore));
+    emit(await analyze(process.cwd(), files), flags);
+  },
+  rules(positional, flags) {
+    requireRepo();
+    const config = loadCfg();
+    const changedPaths = getDiff(diffTargetTokens(positional, flags), { cwd: process.cwd() }).files.map((f) => f.path);
+    emit(gatherRules({ repoDir: process.cwd(), configRules: config.rules, changedPaths }), flags);
+  },
+  refs(positional, flags) {
+    requireRepo();
+    if (!positional[0]) throw new Error("anchor: refs needs a symbol, e.g. `anchor refs myFunction`");
+    emit(findRefs(process.cwd(), positional[0]), flags);
   },
   learn(positional, flags) {
     requireRepo();
     const [action, ...args] = positional;
-    if (action === void 0 || action === "list") return emit(listLearnings(process.cwd()), flags);
+    if (action === void 0 || action === "list") {
+      const all = listLearnings(process.cwd());
+      if (flags.has("from-diff") || flags.has("staged")) {
+        const changedPaths = getDiff(diffTargetTokens(args, flags), { cwd: process.cwd() }).files.map((f) => f.path);
+        return emit({ patterns: selectLearnings(all.patterns, changedPaths) }, flags);
+      }
+      return emit(all, flags);
+    }
     if (action === "add") {
       ensureGitignore(process.cwd());
+      const meta = {
+        scope: (
+          /** @type {string|undefined} */
+          flags.get("scope")
+        ),
+        category: (
+          /** @type {string|undefined} */
+          flags.get("category")
+        ),
+        action: (
+          /** @type {string|undefined} */
+          flags.get("action")
+        )
+      };
       const r = addLearning(
         process.cwd(),
         args.join(" "),
         /** @type {string|undefined} */
-        flags.get("reason")
+        flags.get("reason"),
+        meta
       );
       if (r.deduped) process.stderr.write("\u21AA already in learnings, skipped\n");
       return emit(r, flags);
@@ -5208,7 +5576,7 @@ var HANDLERS = {
     const [action, ...args] = positional;
     if (action === "save") {
       ensureGitignore(process.cwd());
-      const content = readFileSync9(0, "utf8");
+      const content = readFileSync11(0, "utf8");
       return emit(saveReview(process.cwd(), content, { path: args[0], target: (
         /** @type {string|undefined} */
         flags.get("target")
@@ -5244,7 +5612,7 @@ var HANDLERS = {
     throw new Error("anchor: hook needs install|uninstall");
   }
 };
-function main() {
+async function main() {
   const [sub, ...rest] = process.argv.slice(2);
   const { positional, flags } = parseArgs(rest);
   const handler = HANDLERS[sub];
@@ -5254,7 +5622,7 @@ function main() {
     return;
   }
   try {
-    handler(positional, flags, rest);
+    await handler(positional, flags, rest);
   } catch (e) {
     process.stderr.write((e?.message ?? String(e)) + "\n");
     process.exitCode = 1;

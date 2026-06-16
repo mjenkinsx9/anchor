@@ -2,3 +2,4 @@ node_modules/
 .anchor/
 .claude/
 Anchor-Spec-Bundle/
+tests/eval/.out/

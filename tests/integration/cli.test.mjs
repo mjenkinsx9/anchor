@@ -26,7 +26,7 @@ describe('anchor CLI skeleton', () => {
     const r = anchor(['config']);
     const out = JSON.parse(r.stdout);
     expect(out.strictness).toBe(2);
-    expect(out.max_diff_lines).toBe(2000);
+    expect(out.max_diff_lines).toBe(15000);
   });
   it('unknown subcommand → exit 1 with usage on stderr', () => {
     const r = anchor(['bogus']);

@@ -46,13 +46,24 @@ Parse the arguments: no target = uncommitted; `--staged`; `<ref1>..<ref2>`;
 the PR real?). If invalid, ask the user.
 
 ### Step 2 — Read project state
-Read these files with the Read tool (skip silently if absent):
-- `.anchor/config.yaml`, `.anchor/codebase-map.md`, `.anchor/codebase-graph.md`, `.anchor/learnings.md`
+First, get the **effective** config (defaults merged with the user's file — this is
+how you learn the active `categories`, `strictness`, `min_severity`,
+`min_confidence`, `max_findings`, and `protected_categories` even for keys the user
+didn't set): run `anchor config --format json` via Bash and parse it. Do NOT rely on
+reading the raw `.anchor/config.yaml` alone — it omits defaults.
+
+Then read these files with the Read tool (skip silently if absent):
+- `.anchor/codebase-map.md`, `.anchor/codebase-graph.md`
 - `CLAUDE.md` at cwd and each parent directory up to the repo root
 - `AGENTS.md` at the repo root
+- `.anchor/rules.md` — free-prose positive review rules (project intent). If present,
+  enforce them as review criteria; weight them above generic best-practice.
 - `.anchor/instructions.md` and `.anchor/instructions.d/*.md` — these may have
   YAML frontmatter with `include`/`exclude` globs; only apply instruction
   files whose globs match files in the diff. Multiple files stack.
+
+Scoped learnings + structured rules are fetched **after the diff** (Step 3e), since
+they filter by the changed files.
 
 If neither codebase-map.md nor codebase-graph.md exists, tell the user:
 "Tip: run `/anchor init` to build a codebase map and dependency graph for
@@ -60,13 +71,23 @@ richer reviews." Then continue — grep context still works.
 
 ### Step 3 — Get the diff
 Run `anchor diff <target>` via Bash and parse the JSON. If it exits 1
-(too large / not a repo / bad target), show the error verbatim and stop.
+(not a repo / bad target), show the error verbatim and stop.
+
+If the JSON has `overBudget: true`, the diff is large but **still present** —
+do NOT stop. Surface the `budgetWarning` to the user, then review the
+highest-signal files first (entrypoints, security-sensitive and hand-written
+code before generated/lock/vendored files), and record in the "Context used"
+footer which files you prioritized and which you skipped. The user can re-run
+with `--max-diff-lines N` (raise the budget) or `--force` (silence the flag).
 
 ### Step 3b — PR/issue context (PR mode only, skip if `--no-pr-context`)
-Run: `gh pr view <N> --json title,body,closingIssues`
-Add PR title + body + each linked issue to the context under a
-`## PR/issue context` label. If `gh` fails or there is no body/issues, skip
-silently — never block the review. Note failures for the Context used footer.
+Run: `gh pr view <N> --json title,body` (these fields always exist). Do NOT
+request `closingIssues` — it is not a valid `gh pr view --json` field and makes
+the whole call fail. Derive linked issues best-effort by scanning the body for
+`(closes|fixes|resolves) #<n>` and fetching each with
+`gh issue view <n> --json title,body`. Add PR title + body + linked issues
+under a `## PR/issue context` label. If `gh` fails or there is no body/issues,
+skip silently — never block the review. Note failures for the Context used footer.
 
 ### Step 3c — CI failure context (PR mode only, skip if `--no-ci-context`)
 Run: `gh pr checks <N>`. If any check failed, get the failed log:
@@ -74,10 +95,34 @@ Run: `gh pr checks <N>`. If any check failed, get the failed log:
 `## CI failure context` label. All checks passing, no runs, or gh errors →
 skip silently.
 
+### Step 3d — Static analyzer findings (run after the diff)
+Run `anchor analyze --from-diff <target>` and parse the JSON. Treat `findings[]`
+as GROUND TRUTH (a real parser/linter produced them): do not re-derive or
+second-guess them, fold them into your review (dedup against your own findings),
+and attribute them to the tool. **Prioritize findings with `changed: true` (they
+touch the diff); a `changed: false` finding is ambient project noise UNLESS it is
+plausibly caused by this change (e.g. a signature change breaking an unchanged
+caller) — surface those, drop the rest.** If `truncated: true`, say so. List which
+tools ran (and which were skipped as not-installed) in the "Context used" footer.
+If `tools` is empty, note that no analyzers were available and rely on reasoning.
+
+### Step 3e — Scoped learnings + positive rules (run after the diff)
+- Run `anchor learn list --from-diff <target>` to load only the noise-suppression
+  learnings whose `scope` matches the changed files (so a domain-layer learning
+  doesn't silence findings in unrelated code). Apply these as "do not surface"
+  patterns — subject to the protected-categories floor in Step 6.
+- Run `anchor rules --from-diff <target>` to load scoped positive rules
+  (`rules[]`) plus any `.anchor/rules.md` prose. A matching rule violation IS a
+  finding at the rule's severity. Rules are project intent — weight them above
+  generic best-practice.
+
 ### Step 4 — Get related files
 Run `anchor context --from-diff <target> --max-files 50`. Read each related
 file with the Read tool (respect a sensible token budget — prefer importers
-of changed files first).
+of changed files first). Files with `reason: "manifest"` are declared contracts
+(schema, OpenAPI, design docs from `.anchor/files.json`) that the change must
+conform to — read them and check the diff against them; their `description` says
+why they matter.
 
 ### Step 5 — Build the context block and track sources
 Assemble: diff + related files + project instructions + learnings + config
@@ -95,11 +140,48 @@ Apply the strictness prior from config (default 2):
 - **3 (critical-only):** Only flag bugs, security vulnerabilities, data loss
   risks, crashes. Skip style, naming, organization, optimization.
 
+**Category is a generation gate, not a post-hoc filter.** Generate findings ONLY
+in the active `categories` (from the `anchor config --format json` you ran in
+Step 2; default all). Do not produce a finding outside them, even to downgrade
+it. `category` (logic/security/perf/style/docs/tests) and `severity` are
+independent axes: a logic bug can be any severity; a style nit is category=style.
+Apply strictness as a generation gate too: at strictness 2 (default) do NOT emit
+category=style/docs findings unless they cause a real bug; at strictness 3 emit
+only logic/security findings with crash/data-loss impact. (The protected-categories
+floor below still overrides this — never drop a protected finding to satisfy a gate.)
+
 Apply learnings: each `###` heading in learnings.md is a "do not surface"
-pattern — do not flag it unless it creates a real bug.
+pattern — do not flag it unless it creates a real bug. A learning may downgrade
+or hide a STYLE/QUALITY finding, but it must NEVER suppress a finding whose nature
+is in `protected_categories` (from `anchor config`; default: security, data-loss,
+crash, injection, auth). If a learning conflicts with a protected-category
+finding, the finding wins.
 
 Be honest. If the code is clean, say so. Do not invent issues to fill quota.
 Respect the user's noise markings and the project's stated rules.
+
+**Verify before you flag (this is what separates a good review from a noisy one):**
+- For every CRITICAL or HIGH finding, confirm the claim against the actual code.
+  You fetched related files in Step 4 — read the defining file (open more if
+  needed). If a finding depends on behavior you cannot see in the diff or the
+  files you read (e.g. "this function is only called once", "this event never
+  fires for X", "this value is always non-null"), either read the source that
+  proves it, or cap the finding's confidence at 3 and label it
+  **unverified — needs confirmation**. Never assert runtime behavior you have
+  not checked.
+- **Evidence-seeking for usage claims:** before finalizing a CRITICAL/HIGH that
+  depends on usage ("unused", "never called", "no other caller", "always null"),
+  run `anchor refs <symbol>` and read the call sites. If the references
+  contradict the finding, DROP it. Conversely, if `anchor refs` shows callers the
+  diff did NOT update (an omission), consider whether they need updating and flag it.
+  (Note: `refs` returns all word-boundary matches, not a definition-resolved set —
+  use it as evidence, not proof.)
+- For every suggested fix, confirm it does not break a path that is currently
+  correct, and state the assumption it relies on. A wrong fix is worse than no
+  finding — the `fix all` follow-up may apply it verbatim.
+- Self-refutation pass: for each CRITICAL/HIGH, spend one sentence trying to
+  disprove it. If it survives only as speculation, downgrade or drop it. A
+  short list of verified findings beats a long list of plausible ones.
 
 In PR mode: verify the change addresses the linked issue's acceptance
 criteria; call out unmet criteria. If CI failed, correlate the failure back
@@ -119,9 +201,17 @@ Filter post-hoc: drop findings below `min_severity`, below `min_confidence`,
 outside `categories`, and beyond `max_findings`.
 
 ### Step 7 — Render the review
+
+**Confidence rubric (tie the score to evidence, not vibes):** 5 = verified
+against source/spec you actually read; 4 = strongly supported by the diff plus
+a file you read; 3 = plausible from the diff alone; ≤2 = inference. The
+`Reasoning:` line must state what you verified and what you did not, and any
+finding labeled *unverified* caps the overall confidence at 3.
+
 Use exactly this structure (severities with zero findings show "None."):
 
 ```
+<!-- anchor:meta {"score": <0-5>, "severities": {"critical": <n>, "high": <n>, "medium": <n>, "low": <n>}} -->
 ────────────────────────────────────────────────────────────────
   Anchor Review  ·  <target>  ·  <sha>
   <date time>  ·  <N> files changed, +<added> / −<removed>
@@ -175,8 +265,14 @@ Use exactly this structure (severities with zero findings show "None."):
 Number findings sequentially across all severities (CRITICAL first) so
 "finding N" replies are unambiguous.
 
+The first line is a machine-readable `anchor:meta` comment (invisible in most
+markdown viewers). Keep its `score`/`severities` consistent with the rendered
+`Confidence` line and the per-severity counts — `anchor review save` parses this
+block (falling back to scraping the text) to record the review's score and
+severity counts in the archive frontmatter.
+
 ### Step 8 — Handle follow-ups
-- `mark finding N as noise` → Bash: `anchor learn add "<a concise generalized pattern>" --reason "<why>"`
+- `mark finding N as noise` → Bash: `anchor learn add "<a concise generalized pattern>" --reason "<why>" --scope "<glob from the finding's file, e.g. src/db/**>" --category "<the finding's category>"` (scope keeps the learning from silencing unrelated code; omit `--scope` only if the pattern is genuinely repo-wide)
 - `explain finding N` → explain in more depth using the context you already have
 - `fix finding N` → propose a patch via the normal Edit workflow (never auto-apply)
 - `fix all` → walk findings CRITICAL → LOW, proposing a patch for each in turn

@@ -30,7 +30,10 @@
     "patterns": [
       {
         "heading": "Missing docstrings on private methods",
-        "reason": "project style"
+        "reason": "project style",
+        "scope": "**",
+        "category": null,
+        "action": "suppress"
       }
     ]
   }

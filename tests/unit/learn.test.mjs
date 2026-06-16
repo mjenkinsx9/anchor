@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, rmSync, readFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { listLearnings, addLearning, removeLearning } from '../../lib/learn.mjs';
+import { listLearnings, addLearning, removeLearning, selectLearnings } from '../../lib/learn.mjs';
 
 let dir;
 beforeEach(() => { dir = mkdtempSync(join(tmpdir(), 'anchor-learn-')); });
@@ -36,14 +36,44 @@ describe('listLearnings', () => {
   it('empty when no file', () => {
     expect(listLearnings(dir).patterns).toEqual([]);
   });
-  it('returns headings and reasons', () => {
+  it('returns headings and reasons (with default meta)', () => {
     addLearning(dir, 'Pattern A', 'why A');
     addLearning(dir, 'Pattern B');
     const { patterns } = listLearnings(dir);
     expect(patterns).toEqual([
-      { heading: 'Pattern A', reason: 'why A' },
-      { heading: 'Pattern B', reason: null },
+      { heading: 'Pattern A', reason: 'why A', scope: '**', category: null, action: 'suppress' },
+      { heading: 'Pattern B', reason: null, scope: '**', category: null, action: 'suppress' },
     ]);
+  });
+});
+
+describe('scoped learnings (meta)', () => {
+  it('round-trips a scoped learning and defaults legacy entries to global scope', () => {
+    addLearning(dir, 'Missing docstrings', 'team style', { scope: 'src/lib/**', category: 'docs', action: 'suppress' });
+    const [p] = listLearnings(dir).patterns;
+    expect(p.scope).toBe('src/lib/**');
+    expect(p.category).toBe('docs');
+    expect(p.action).toBe('suppress');
+    // survives a rewrite cycle
+    addLearning(dir, 'Another');
+    const again = listLearnings(dir).patterns.find((x) => x.heading === 'Missing docstrings');
+    expect(again.scope).toBe('src/lib/**');
+  });
+  it('legacy entries (no meta) are re-serialized WITHOUT a meta line', () => {
+    addLearning(dir, 'old pattern', 'why');
+    // force a rewrite by adding another entry
+    addLearning(dir, 'second');
+    const text = readFileSync(FILE(), 'utf8');
+    expect(text).not.toContain('<!-- meta:');
+    expect(text).toContain('### old pattern');
+  });
+  it('selectLearnings filters by scope; unscoped apply everywhere', () => {
+    addLearning(dir, 'db rule', 'x', { scope: 'src/db/**' });
+    addLearning(dir, 'global rule', 'y'); // scope '**'
+    const { patterns } = listLearnings(dir);
+    expect(selectLearnings(patterns, ['src/db/users.ts']).map((p) => p.heading).sort())
+      .toEqual(['db rule', 'global rule']);
+    expect(selectLearnings(patterns, ['src/ui/button.tsx']).map((p) => p.heading)).toEqual(['global rule']);
   });
 });
 

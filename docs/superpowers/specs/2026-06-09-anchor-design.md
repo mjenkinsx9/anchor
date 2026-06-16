@@ -928,6 +928,12 @@ A 5-minute checklist the developer runs on first install and after any major cha
 
 The pattern: **fail fast on environmental errors, degrade gracefully on data errors, trust the LLM on output.**
 
+> **Superseded (2026-06-16):** the diff budget no longer hard-fails. `anchor diff`
+> now emits `overBudget: true` with a `budgetWarning` and the reviewer prioritizes
+> the most important files instead of bailing. The "Diff too large"/"Too many
+> files" rows below describe the original behavior. See
+> `docs/superpowers/plans/2026-06-16-anchor-review-quality.md`.
+
 | Failure | What happens | UX |
 |---|---|---|
 | Not in a git repo | bail at start | "anchor: not a git repository. Run from inside a repo, or pass --dir." |

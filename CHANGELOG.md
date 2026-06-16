@@ -1,5 +1,59 @@
 # Changelog
 
+## Unreleased
+
+- **Diff budget no longer hard-fails.** Over `max_diff_lines`/`max_files`,
+  `anchor diff` now emits the diff with `overBudget: true` + a `budgetWarning`
+  instead of exiting 1, so large diffs still get reviewed (the reviewer
+  prioritizes the most important files). Default `max_diff_lines` raised
+  2,000 → 15,000. New per-run overrides: `--max-diff-lines N` and `--force`.
+- **Fixed:** valued-flag values (e.g. `--max-diff-lines 100`, `--format text`)
+  no longer leak into `anchor diff` as a bogus diff target.
+- **Review prompt (SKILL.md):** added a verification gate (confirm CRITICAL/HIGH
+  against source before flagging; cap unverified findings at confidence 3), a
+  fix-safety check, a self-refutation pass, and an evidence-tied confidence
+  rubric — fewer confident-but-wrong findings. Step 3 now handles `overBudget`
+  gracefully. Fixed the invalid `gh pr view --json closingIssues` call in
+  PR-context gathering.
+- **Review-quality eval harness** (`tests/eval/`, `lib/eval.mjs`, `npm run eval`):
+  fixtures with planted bugs plus a clean case, scored for recall / precision /
+  false-positives against the real review prompt. The scorer is unit-tested.
+- **New review-input commands** (deterministic gather steps the skill feeds into
+  the review):
+  - `anchor analyze --from-diff <target>` — runs installed static analyzers
+    (tsc/eslint/ruff/shellcheck) scoped to changed files and emits normalized,
+    grounded findings. Resolves project-local `node_modules/.bin` tools (not just
+    global PATH), normalizes paths to repo-relative, tags each finding `changed`
+    (touches the diff) and caps output. Never throws on a missing/failing tool.
+  - `anchor rules --from-diff <target>` — positive review rules that *enforce
+    intent* (`.anchor/rules.md` prose + scoped `config.rules`), the complement to
+    learnings (which suppress). Scope globs are validated.
+  - `anchor refs <symbol>` — find word-boundary references via `git grep`, an
+    evidence aid so the verification gate can disprove usage-based findings.
+- **Config hardening:** validate `min_severity`, category membership, and
+  `output.color`; bound `max_findings`/`min_confidence`/`max_diff_lines`/`max_files`;
+  reject a non-mapping `output`. New keys `protected_categories` (a floor learnings
+  can never suppress) and `rules` (with defaults + validation). `ensureGitignore`
+  is now idempotent against trailing whitespace.
+- **Scoped learnings:** `anchor learn add` accepts `--scope`/`--category`/`--action`;
+  `anchor learn list --from-diff <target>` returns only learnings whose scope
+  matches the changed files. Legacy learnings round-trip unchanged (apply
+  everywhere). Whitespace is normalized for reliable dedup.
+- **Context manifest:** `.anchor/files.json` points the reviewer at non-imported
+  contracts (schema/OpenAPI/design docs); matching files appear in `anchor context`
+  with `reason: "manifest"` and a description. Malformed manifests are ignored.
+- **Hardening:** default 30s timeout on external commands (distinct code 124 on
+  timeout; `gh pr` calls get 120s); `parseUnifiedDiff` no longer swallows the next
+  file when a hunk is truncated; default `ignore` now covers `dist/`/`build/`/
+  `coverage/`; the eval scorer accepts hyphenated categories (`data-loss`).
+- **Review prompt (SKILL.md):** reads the *effective* merged config via
+  `anchor config --format json`; category + strictness now gate *generation* (not
+  just post-hoc filtering); protected categories are a hard floor; emits a
+  machine-readable `anchor:meta` block for robust score/severity archival.
+- Added `npm run eval:ci` (sets `ANCHOR_EVAL_GENERATE=1`). Note: the LLM eval only
+  scores when a `claude` model is available; the deterministic test suite + the
+  unit-tested scorer are the CI-binding gate.
+
 ## v0.2.3 — 2026-06-14
 
 - Add richer Codex plugin metadata for directory presentation and discovery.
