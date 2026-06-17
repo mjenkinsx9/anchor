@@ -1,6 +1,6 @@
 {
   "name": "anchor",
-  "version": "0.2.3",
+  "version": "0.3.0",
   "description": "Personal code review: deterministic CLI gathers diff/context/learnings; the active Claude session reasons over them.",
   "author": { "name": "Mike Jenkins" },
   "homepage": "https://github.com/mjenkinsx9/anchor",

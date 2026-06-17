@@ -2,6 +2,34 @@
 
 ## Unreleased
 
+## v0.3.0 — 2026-06-17
+
+- **Phase 4 — review-quality features:**
+  - **Local graph context (4A):** `anchor context` / `getContext` now surface
+    same-directory **siblings** and reverse-reference **callers**
+    (`reason: "sibling"`/`"caller"`), beyond the import graph — conservative caps
+    keep it from flooding context.
+  - **Incremental review + dedup (4C):** `anchor diff --since-last` reviews only
+    what changed since the last archived review (rebase-safe fallback to the full
+    diff). Reviews store per-finding identity (`finding_hashes`/`findings`,
+    digit-blind so line shifts don't break identity) and flag re-emitted prior
+    findings **non-destructively** at save time; the SKILL suppresses unchanged-line
+    repeats.
+  - **Unified `anchor:finding` block (4D):** each finding carries a
+    machine-readable record with a `fix` spec (post-change `edits` + a discovered
+    `verify` command). `fix finding N` applies via Edit then auto-verifies (no longer
+    "never auto-apply"); every CRITICAL/HIGH carries a fix-spec or an explicit
+    "no safe automatic fix".
+  - **Linked-issue acceptance criteria (4E):** new `anchor issue-criteria` extracts
+    checklist/criteria from an issue body (pure, testable); PR-mode reviews render a
+    three-state ✅/❌/❓ verdict per criterion.
+  - 4B (cascading per-directory config) was scoped but **not built** — a personal
+    tool has no monorepo multi-config use case; semantics are recorded in the design doc.
+- **Fixed:** `ensureGitignore` no longer re-appends a stray
+  `# Anchor (personal code review state)` comment when a repo already ignores every
+  `.anchor/` path under its own renamed/numbered section header. The append decision
+  now keys on the real ignore patterns, not the comment line.
+
 - **Diff budget no longer hard-fails.** Over `max_diff_lines`/`max_files`,
   `anchor diff` now emits the diff with `overBudget: true` + a `budgetWarning`
   instead of exiting 1, so large diffs still get reviewed (the reviewer
