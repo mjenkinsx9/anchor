@@ -151,4 +151,32 @@ describe('ensureGitignore', () => {
     expect(content.match(/\.anchor\/config\.yaml/g)).toHaveLength(1);
     expect(content.match(/\.anchor\/reviews\//g)).toHaveLength(1);
   });
+  it('leaves a .gitignore untouched when all patterns exist under a custom header (no orphan comment)', () => {
+    // A repo that numbered/renamed the section header still ignores every .anchor/ path.
+    // Anchor must not re-append its bare "# Anchor (personal code review state)" comment
+    // just because that exact header string is absent (the orphan-comment churn bug).
+    const custom = [
+      '# -----------------------------------------------------------------------------',
+      '# 17. Anchor (personal code review state)',
+      '# -----------------------------------------------------------------------------',
+      '.anchor/config.yaml',
+      '.anchor/codebase-map.md',
+      '.anchor/codebase-graph.md',
+      '.anchor/learnings.md',
+      '.anchor/reviews/',
+      '',
+    ].join('\n');
+    writeFileSync(join(dir, '.gitignore'), custom);
+    const { added } = ensureGitignore(dir);
+    expect(added).toBe(false);                                            // all patterns present → nothing to add
+    expect(readFileSync(join(dir, '.gitignore'), 'utf8')).toBe(custom);   // file byte-identical — no orphan header appended
+  });
+  it('emits the header comment exactly once when it appends genuinely missing patterns', () => {
+    writeFileSync(join(dir, '.gitignore'), 'node_modules/\n');
+    const { added } = ensureGitignore(dir);
+    expect(added).toBe(true);
+    const content = readFileSync(join(dir, '.gitignore'), 'utf8');
+    expect(content.match(/# Anchor \(personal code review state\)/g)).toHaveLength(1);
+    expect(content).toContain('.anchor/reviews/');
+  });
 });
