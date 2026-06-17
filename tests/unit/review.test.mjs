@@ -1,6 +1,6 @@
 import { describe, it, expect, afterAll } from 'vitest';
 import { readFileSync, existsSync } from 'node:fs';
-import { saveReview, listReviews, showReview, extractReviewMeta } from '../../lib/review.mjs';
+import { saveReview, listReviews, showReview, extractReviewMeta, parseFindingBlocks } from '../../lib/review.mjs';
 import { makeFixtureRepo } from '../helpers/fixture.mjs';
 
 const repo = makeFixtureRepo({ 'a.txt': 'x\n' });
@@ -116,5 +116,40 @@ describe('extractReviewMeta', () => {
     const m = extractReviewMeta('just some notes, no format\n');
     expect(m.score).toBeNull();
     expect(m.severities).toBeNull();
+  });
+});
+
+describe('parseFindingBlocks', () => {
+  const block = (o) => `<!-- anchor:finding ${JSON.stringify(o)} -->`;
+
+  it('parses a single block with a nested fix spec', () => {
+    const content = `intro\n${block({
+      n: 1, file: 'src/a.ts', line: 10, severity: 'high', category: 'logic',
+      title: 'Off-by-one in slice', fix: { edits: [{ file: 'src/a.ts', range: [10, 10], replacement: 'xs[i]' }], verify: 'vitest run tests/unit' },
+    })}\nmore\n`;
+    const out = parseFindingBlocks(content);
+    expect(out).toHaveLength(1);
+    expect(out[0]).toMatchObject({ file: 'src/a.ts', title: 'Off-by-one in slice', severity: 'high' });
+    expect(out[0].fix.edits[0].range).toEqual([10, 10]);
+    expect(out[0].fix.verify).toBe('vitest run tests/unit');
+  });
+
+  it('parses multiple blocks in document order', () => {
+    const content = `${block({ n: 1, file: 'a.ts', title: 'First' })}\n${block({ n: 2, file: 'b.ts', title: 'Second' })}\n`;
+    expect(parseFindingBlocks(content).map((f) => f.title)).toEqual(['First', 'Second']);
+  });
+
+  it('skips a malformed-JSON block but keeps valid ones', () => {
+    const content = `<!-- anchor:finding {not json} -->\n${block({ file: 'b.ts', title: 'Valid' })}\n`;
+    expect(parseFindingBlocks(content).map((f) => f.title)).toEqual(['Valid']);
+  });
+
+  it('skips a block missing file or title (the dedup identity)', () => {
+    const content = `${block({ file: 'a.ts' })}\n${block({ title: 'no file' })}\n${block({ file: 'c.ts', title: 'ok' })}\n`;
+    expect(parseFindingBlocks(content).map((f) => f.title)).toEqual(['ok']);
+  });
+
+  it('returns [] when there are no blocks', () => {
+    expect(parseFindingBlocks('plain review, no machine block\n')).toEqual([]);
   });
 });

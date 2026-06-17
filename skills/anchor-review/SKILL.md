@@ -262,6 +262,30 @@ Use exactly this structure (severities with zero findings show "None."):
 ────────────────────────────────────────────────────────────────
 ```
 
+**Per-finding machine-readable block (`anchor:finding`).** Inside each finding's
+rendered block, emit ONE HTML comment carrying that finding's machine-readable
+record (invisible in markdown viewers, like `anchor:meta`). **Required for every
+CRITICAL/HIGH finding; optional for MEDIUM/LOW.** Exact shape:
+
+    <!-- anchor:finding {"n":N,"file":"<repo-rel>","line":L,"severity":"high","category":"logic","title":"<canonical short desc>","fix":{"edits":[{"file":"<repo-rel>","range":[start,end],"replacement":"<new text>"}],"verify":"<cmd|null>"}} -->
+
+- `title` is the canonical short description and the dedup identity — keep it stable
+  for the same defect across runs (a script hashes `file` + a digit-blinded `title`).
+- `fix.edits` is an array (a multi-spot fix is one spec). `range` is `[startLine,
+  endLine]` in **new-file** (post-change) coordinates — the same line numbers as the
+  `<line> | code` blocks above. `replacement` is the new text for that range. Avoid a
+  literal `-->` inside `replacement` or `title` — it truncates the HTML comment and the
+  block is silently skipped by the parser.
+- `fix.verify` is the discovered test/build command, or `null`. **Discover it once**:
+  `package.json` `scripts.test` or `scripts.build` (this repo: `vitest run tests/unit`)
+  → else `pytest` / `cargo test` / `go test ./...` / `make test` if those toolchains
+  are present → else `null` (and ask the user at fix-time).
+
+**"Can't spec it → noise" discipline.** Every CRITICAL/HIGH finding must carry EITHER
+a concrete `fix` spec OR, in its explanation, an explicit `no safe automatic fix:
+<reason>`. If you can produce neither a concrete fix nor a justification, the finding
+is too vague to stand — downgrade or drop it. (Vagueness becomes visible; precision wins.)
+
 Number findings sequentially across all severities (CRITICAL first) so
 "finding N" replies are unambiguous.
 
@@ -274,8 +298,14 @@ severity counts in the archive frontmatter.
 ### Step 8 — Handle follow-ups
 - `mark finding N as noise` → Bash: `anchor learn add "<a concise generalized pattern>" --reason "<why>" --scope "<glob from the finding's file, e.g. src/db/**>" --category "<the finding's category>"` (scope keeps the learning from silencing unrelated code; omit `--scope` only if the pattern is genuinely repo-wide)
 - `explain finding N` → explain in more depth using the context you already have
-- `fix finding N` → propose a patch via the normal Edit workflow (never auto-apply)
-- `fix all` → walk findings CRITICAL → LOW, proposing a patch for each in turn
+- `fix finding N` → never edit as a side-effect of review; an explicit `fix finding N`
+  applies the finding's `fix.edits` via the Edit tool (which surfaces the change for
+  approval), then auto-runs the `fix.verify` command, reports pass/fail, and **keeps
+  the diff even if verify fails** (a failing verify is information, not a rollback
+  trigger — tell the user and let them decide). If the finding has no `fix` spec, say
+  so and propose a patch the normal way.
+- `fix all` → walk findings CRITICAL → LOW, applying each finding's `fix.edits` in
+  turn, then run the discovered `verify` command ONCE at the end and report the result.
 - `generate docstrings` → add docstrings (per language convention) to changed functions/classes/exports
 - `generate tests` → write unit tests for the changed code paths in the project's existing test style
 - `simplify` → propose a refactor of the changed code (dead code, redundant conditionals, naming, duplication)
