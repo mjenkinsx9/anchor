@@ -4365,8 +4365,8 @@ function loadConfig(repoDir) {
   };
   return { config, warnings };
 }
-var GITIGNORE_BLOCK = [
-  "# Anchor (personal code review state)",
+var GITIGNORE_HEADER = "# Anchor (personal code review state)";
+var GITIGNORE_PATTERNS = [
   ".anchor/config.yaml",
   ".anchor/codebase-map.md",
   ".anchor/codebase-graph.md",
@@ -4377,10 +4377,11 @@ function ensureGitignore(repoDir) {
   const file = join(repoDir, ".gitignore");
   const existing = existsSync(file) ? readFileSync(file, "utf8") : "";
   const lines = new Set(existing.split("\n").map((l) => l.trim()));
-  const missing = GITIGNORE_BLOCK.filter((l) => !lines.has(l));
+  const missing = GITIGNORE_PATTERNS.filter((l) => !lines.has(l));
   if (missing.length === 0) return { added: false };
+  const block = lines.has(GITIGNORE_HEADER) ? missing : [GITIGNORE_HEADER, ...missing];
   const sep3 = existing.length && !existing.endsWith("\n") ? "\n" : "";
-  appendFileSync(file, `${sep3}${missing.join("\n")}
+  appendFileSync(file, `${sep3}${block.join("\n")}
 `);
   return { added: true };
 }
