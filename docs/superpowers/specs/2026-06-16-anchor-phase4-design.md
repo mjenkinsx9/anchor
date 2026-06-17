@@ -191,13 +191,16 @@ to a full diff with a warning. Ports = partial (local; no PR-thread state).
 
 ---
 
-## 4B — Cascading per-directory config (SPEC-ONLY — build deferred)
+## 4B — Cascading per-directory config (WON'T BUILD — personal tool, no monorepo use case)
 
-**Decision:** document the merge semantics; **do not implement now.** It only helps
-multi-config monorepos; single-config repos gain nothing. Build when a real
-monorepo use case appears. Recorded here so the semantics are settled in advance.
+**Decision (updated 2026-06-17):** **won't build.** Anchor is a personal code-review
+tool; nested per-directory config only benefits shared multi-config monorepos —
+single-config repos gain nothing, and that monorepo use case is not expected here. The
+merge semantics below are kept on record so the feature can be picked up cheaply *if*
+that ever changes, but it is not planned work. (Originally "build deferred"; closed out
+as won't-build once it was clear the monorepo case wouldn't arise.)
 
-**Semantics (when built):**
+**Semantics (if it is ever built):**
 - **Trigger:** per-file resolution activates only when nested `.anchor/config.yaml`
   files exist; otherwise behavior is byte-identical to today (golden snapshots safe).
 - **`resolveConfigForPath(repoDir, filePath)`:** walk `dirname(filePath)` up to

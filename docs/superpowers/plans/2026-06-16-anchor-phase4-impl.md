@@ -1304,12 +1304,14 @@ git commit -m "feat(4E): issue acceptance-criteria extractor + issue-criteria CL
 
 ---
 
-## 4B — Not implemented (spec-only)
+## 4B — Won't build (no monorepo use case)
 
-4B (cascading per-directory config) is intentionally NOT built in Phase 4. Its merge
-semantics are recorded in `docs/superpowers/specs/2026-06-16-anchor-phase4-design.md`.
-No `lib/config.mjs`, `templates/config.yaml`, or `disabled_rules` changes are part of
-this plan. Do not add them.
+4B (cascading per-directory config) is intentionally NOT built — and, as of 2026-06-17,
+closed out as **won't-build** (Anchor is a personal tool; the nested multi-config
+monorepo case it serves isn't expected). Its merge semantics remain on record in
+`docs/superpowers/specs/2026-06-16-anchor-phase4-design.md` should that ever change. No
+`lib/config.mjs`, `templates/config.yaml`, or `disabled_rules` changes are part of this
+plan. Do not add them.
 
 ---
 
