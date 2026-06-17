@@ -48,4 +48,18 @@ export const CASES = [
     expected: [],
     cleanFiles: ['src/calc.ts'],
   },
+  {
+    name: 'pattern-inconsistency',
+    // getOrder.ts validates its arg; the changed getUser.ts (same dir) drops the guard.
+    // The sibling signal puts getOrder.ts in context so the review can flag the gap.
+    base: {
+      'src/db/getOrder.ts': 'export function getOrder(id: string) {\n  if (!id) throw new Error("id required");\n  return { id };\n}\n',
+      'src/db/getUser.ts': 'export function getUser(id: string) {\n  if (!id) throw new Error("id required");\n  return { id };\n}\n',
+    },
+    change: {
+      'src/db/getUser.ts': 'export function getUser(id: string) {\n  return { id };\n}\n',
+    },
+    expected: [{ file: 'src/db/getUser.ts', category: 'logic' }],
+    cleanFiles: [],
+  },
 ];

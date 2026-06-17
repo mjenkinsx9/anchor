@@ -137,6 +137,12 @@ of changed files first). Files with `reason: "manifest"` are declared contracts
 conform to — read them and check the diff against them; their `description` says
 why they matter.
 
+Related files may carry `reason: "caller"` (a reverse-reference call site) or
+`reason: "sibling"` (a same-directory file). Both are **grep-approximate** — no
+semantic resolution, so they can't disambiguate same-named symbols across scopes.
+Treat them as leads to read, not proof, and note in the "Context used" footer that
+caller/sibling context is heuristic.
+
 ### Step 5 — Build the context block and track sources
 Assemble: diff + related files + project instructions + learnings + config
 (+ PR/issue + CI sections when present). Maintain a **sources-used list** of

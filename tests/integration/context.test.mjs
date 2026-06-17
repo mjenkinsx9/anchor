@@ -43,7 +43,9 @@ describe('getContext', () => {
     const byReason = (r) => ctx.files.filter((f) => f.reason === r).map((f) => f.path);
     expect(byReason('importer')).toContain('src/main.ts');
     expect(byReason('importee')).toContain('src/util.ts');
-    expect(ctx.files.map((f) => f.path)).not.toContain('src/unrelated.ts');
+    // src/unrelated.ts may now appear as a sibling — it must NOT appear as importer/importee
+    expect(byReason('importer')).not.toContain('src/unrelated.ts');
+    expect(byReason('importee')).not.toContain('src/unrelated.ts');
     expect(ctx.files.map((f) => f.path)).not.toContain('src/consumer.ts'); // changed files excluded
   });
   it('applies ignore patterns', () => {
@@ -57,6 +59,33 @@ describe('getContext', () => {
   it('no matches → empty list, no throw', () => {
     const ctx = getContext({ files: ['src/unrelated.ts'], repoDir: repo.dir, maxFiles: 50, ignore: ['**/*.test.ts'] });
     expect(Array.isArray(ctx.files)).toBe(true);
+  });
+});
+
+describe('getContext callers + siblings (4A)', () => {
+  // Barrel re-export: `report.ts` imports the symbol from a barrel, NOT from the
+  // changed file — so the importer grep (keyed on the changed file's stem) misses it,
+  // but the caller signal (reverse refs on the exported symbol) catches it.
+  const repo = makeFixtureRepo({
+    'src/calc.ts': 'export function computeTax(x) { return x; }\n',
+    'src/barrel.ts': "export { computeTax } from './calc';\n",
+    'src/report.ts': "import { computeTax } from './barrel';\nexport const r = computeTax(1);\n",
+    'src/db/getUser.ts': 'export const u = 1;\n',
+    'src/db/getOrder.ts': 'export const o = 1;\n',
+  });
+  afterAll(() => repo.cleanup());
+
+  it('surfaces a same-dir sibling with reason "sibling"', () => {
+    const ctx = getContext({ files: ['src/db/getUser.ts'], repoDir: repo.dir, maxFiles: 50, ignore: [] });
+    expect(ctx.files.find((f) => f.path === 'src/db/getOrder.ts')).toMatchObject({ reason: 'sibling' });
+  });
+
+  it('surfaces a barrel/re-export call site the importer misses with reason "caller"', () => {
+    const ctx = getContext({ files: ['src/calc.ts'], repoDir: repo.dir, maxFiles: 50, ignore: [] });
+    const report = ctx.files.find((f) => f.path === 'src/report.ts');
+    expect(report).toBeTruthy();
+    expect(report.reason).toBe('caller');           // not 'importer' (report.ts has no "calc" token)
+    expect(ctx.files.find((f) => f.path === 'src/barrel.ts')).toMatchObject({ reason: 'importer' }); // unchanged precedence
   });
 });
 

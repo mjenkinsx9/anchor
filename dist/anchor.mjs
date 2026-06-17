@@ -4677,10 +4677,66 @@ function loadManifest(repoDir) {
   return raw.filter((e) => e && typeof e.path === "string").map((e) => ({ path: e.path, description: typeof e.description === "string" ? e.description : "", scope: typeof e.scope === "string" ? e.scope : "**" }));
 }
 
+// lib/refs.mjs
+var CODE_GLOBS = ["*.ts", "*.tsx", "*.js", "*.jsx", "*.mjs", "*.py", "*.go", "*.rs", "*.java", "*.rb", "*.c", "*.cpp", "*.h"];
+function findRefs(repoDir, symbol, { globs = CODE_GLOBS } = {}) {
+  if (!symbol || !/^[A-Za-z_$][\w$]*$/.test(symbol)) throw new Error("anchor: refs needs a valid identifier");
+  const r = runGit(["grep", "-nwE", escapeRe(symbol), "--", ...globs], { cwd: repoDir });
+  const references = r.stdout.split("\n").filter(Boolean).map((l) => {
+    const m = /^(.+?):(\d+):(.*)$/.exec(l);
+    return m ? { file: m[1], line: Number(m[2]), text: m[3].trim() } : null;
+  }).filter(Boolean);
+  return { symbol, references, count: references.length };
+}
+
 // lib/context.mjs
 var IMPORT_RE = /(?:import\s[^'"]*['"]([^'"]+)['"]|from\s+['"]([^'"]+)['"]|require\(\s*['"]([^'"]+)['"]\s*\))/g;
 var RESOLVE_EXTS = ["", ".ts", ".tsx", ".js", ".jsx", ".mjs", "/index.ts", "/index.js", ".py"];
 var GREP_GLOBS = ["*.ts", "*.tsx", "*.js", "*.jsx", "*.mjs", "*.py"];
+var JS_EXTS = /* @__PURE__ */ new Set([".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"]);
+var SIBLING_EXTS = /* @__PURE__ */ new Set([".ts", ".tsx", ".js", ".jsx", ".mjs", ".py", ".go", ".rs", ".java", ".rb", ".c", ".cpp", ".h"]);
+var COMMON_NAMES = /* @__PURE__ */ new Set([
+  "get",
+  "set",
+  "run",
+  "init",
+  "main",
+  "index",
+  "default",
+  "handler",
+  "value",
+  "data",
+  "name",
+  "type",
+  "item",
+  "list",
+  "config",
+  "options",
+  "props",
+  "state",
+  "result",
+  "error",
+  "utils",
+  "util",
+  "helper",
+  "helpers",
+  "create",
+  "update",
+  "remove",
+  "delete",
+  "parse",
+  "format",
+  "render",
+  "setup",
+  "start",
+  "stop",
+  "load",
+  "save",
+  "read",
+  "write"
+]);
+var CALLER_FILE_CAP = 15;
+var SYMBOLS_PER_FILE = 8;
 function parseImports(src) {
   const specs = [];
   for (const m of src.matchAll(IMPORT_RE)) {
@@ -4703,10 +4759,56 @@ function resolveImport(repoDir, fromFile, spec) {
   }
   return null;
 }
+function parseExports(src, ext2) {
+  const names = /* @__PURE__ */ new Set();
+  const s = String(src);
+  if (JS_EXTS.has(ext2)) {
+    for (const m of s.matchAll(/export\s+(?:default\s+)?(?:async\s+)?function\s+([A-Za-z_$][\w$]*)/g)) names.add(m[1]);
+    for (const m of s.matchAll(/export\s+class\s+([A-Za-z_$][\w$]*)/g)) names.add(m[1]);
+    for (const m of s.matchAll(/export\s+(?:const|let|var)\s+([A-Za-z_$][\w$]*)/g)) names.add(m[1]);
+    for (const m of s.matchAll(/export\s*\{([^}]*)\}/g)) {
+      for (const part of m[1].split(",")) {
+        const seg = part.trim();
+        if (!seg) continue;
+        const asMatch = /\bas\s+([A-Za-z_$][\w$]*)\s*$/.exec(seg);
+        const name = asMatch ? asMatch[1] : /^([A-Za-z_$][\w$]*)/.exec(seg)?.[1];
+        if (name) names.add(name);
+      }
+    }
+  } else if (ext2 === ".py") {
+    for (const m of s.matchAll(/^def\s+([A-Za-z_]\w*)/gm)) names.add(m[1]);
+    for (const m of s.matchAll(/^class\s+([A-Za-z_]\w*)/gm)) names.add(m[1]);
+  }
+  return [...names];
+}
+function sharedPrefixLen(a, b) {
+  let i = 0;
+  while (i < a.length && i < b.length && a[i] === b[i]) i++;
+  return i;
+}
+function findSiblings(repoDir, filePath2, { max = 5, exclude = /* @__PURE__ */ new Set() } = {}) {
+  const dir = dirname(filePath2);
+  let entries;
+  try {
+    entries = readdirSync(join5(repoDir, dir), { withFileTypes: true });
+  } catch {
+    return [];
+  }
+  const stem = basename(filePath2, extname(filePath2));
+  const selfBase = basename(filePath2);
+  const cands = entries.filter((e) => e.isFile() && SIBLING_EXTS.has(extname(e.name)) && e.name !== selfBase).map((e) => dir === "." ? e.name : `${dir}/${e.name}`).filter((p) => !exclude.has(p));
+  cands.sort((a, b) => {
+    const da = sharedPrefixLen(stem, basename(a, extname(a)));
+    const db = sharedPrefixLen(stem, basename(b, extname(b)));
+    return db !== da ? db - da : a.localeCompare(b);
+  });
+  return cands.slice(0, max);
+}
 function getContext({ files, repoDir, maxFiles = 50, ignore = [] }) {
   const related = /* @__PURE__ */ new Map();
   const descriptions = /* @__PURE__ */ new Map();
   const changed = new Set(files);
+  const srcCache = /* @__PURE__ */ new Map();
   for (const f of files) {
     const stem = basename(f, extname(f));
     if (stem) {
@@ -4720,7 +4822,9 @@ function getContext({ files, repoDir, maxFiles = 50, ignore = [] }) {
     }
     const abs = join5(repoDir, f);
     if (existsSync5(abs)) {
-      for (const spec of parseImports(readFileSync4(abs, "utf8"))) {
+      const src = readFileSync4(abs, "utf8");
+      srcCache.set(f, src);
+      for (const spec of parseImports(src)) {
         const resolved = resolveImport(repoDir, f, spec);
         if (resolved && !changed.has(resolved) && !related.has(resolved)) {
           related.set(resolved, "importee");
@@ -4733,6 +4837,39 @@ function getContext({ files, repoDir, maxFiles = 50, ignore = [] }) {
     if (changed.has(p) || related.has(p) || !existsSync5(join5(repoDir, p))) continue;
     related.set(p, "manifest");
     if (entry.description) descriptions.set(p, entry.description);
+  }
+  const lookedUp = /* @__PURE__ */ new Set();
+  let callerFiles = 0;
+  for (const f of files) {
+    if (callerFiles >= CALLER_FILE_CAP) break;
+    const src = srcCache.get(f);
+    if (src === void 0) continue;
+    const symbols = parseExports(src, extname(f)).filter((s) => s.length >= 4 && !COMMON_NAMES.has(s.toLowerCase()) && !lookedUp.has(s)).slice(0, SYMBOLS_PER_FILE);
+    for (const sym of symbols) {
+      lookedUp.add(sym);
+      let refs;
+      try {
+        refs = findRefs(repoDir, sym).references;
+      } catch {
+        continue;
+      }
+      for (const ref of refs) {
+        if (callerFiles >= CALLER_FILE_CAP) break;
+        if (!changed.has(ref.file) && !related.has(ref.file)) {
+          related.set(ref.file, "caller");
+          callerFiles++;
+        }
+      }
+    }
+  }
+  const siblingExclude = /* @__PURE__ */ new Set([...changed, ...related.keys()]);
+  for (const f of files) {
+    for (const sib of findSiblings(repoDir, f, { max: 5, exclude: siblingExclude })) {
+      if (!related.has(sib)) {
+        related.set(sib, "sibling");
+        siblingExclude.add(sib);
+      }
+    }
   }
   const list = filterIgnored([...related.keys()], ignore).slice(0, maxFiles).map((path2) => {
     const reason = related.get(path2);
@@ -4980,18 +5117,6 @@ function loadRulesProse(repoDir) {
 }
 function gatherRules({ repoDir, configRules, changedPaths }) {
   return { prose: loadRulesProse(repoDir), rules: selectRules(configRules, changedPaths) };
-}
-
-// lib/refs.mjs
-var CODE_GLOBS = ["*.ts", "*.tsx", "*.js", "*.jsx", "*.mjs", "*.py", "*.go", "*.rs", "*.java", "*.rb", "*.c", "*.cpp", "*.h"];
-function findRefs(repoDir, symbol, { globs = CODE_GLOBS } = {}) {
-  if (!symbol || !/^[A-Za-z_$][\w$]*$/.test(symbol)) throw new Error("anchor: refs needs a valid identifier");
-  const r = runGit(["grep", "-nwE", escapeRe(symbol), "--", ...globs], { cwd: repoDir });
-  const references = r.stdout.split("\n").filter(Boolean).map((l) => {
-    const m = /^(.+?):(\d+):(.*)$/.exec(l);
-    return m ? { file: m[1], line: Number(m[2]), text: m[3].trim() } : null;
-  }).filter(Boolean);
-  return { symbol, references, count: references.length };
 }
 
 // lib/review.mjs

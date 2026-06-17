@@ -23,4 +23,9 @@ describe('SKILL.md Phase 4 contract', () => {
     expect(SKILL).toContain('prior findings');
     expect(SKILL).toMatch(/NOT in the current diff/);
   });
+  it('4A: documents the grep-approximate caller/sibling limitation', () => {
+    expect(SKILL).toContain('reason: "caller"');
+    expect(SKILL).toContain('reason: "sibling"');
+    expect(SKILL).toContain('grep-approximate');
+  });
 });
