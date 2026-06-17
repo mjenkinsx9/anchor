@@ -80,6 +80,12 @@ code before generated/lock/vendored files), and record in the "Context used"
 footer which files you prioritized and which you skipped. The user can re-run
 with `--max-diff-lines N` (raise the budget) or `--force` (silence the flag).
 
+**Incremental review (`--since-last`).** If the user asked for `--since-last`, run
+`anchor diff --since-last`. Its `sinceLast` field reports `{applied:true,range}` (the
+diff is only what changed since the last archived review) or `{applied:false,fallback}`
+(the recorded SHA was rebased/pruned — you got the full working diff instead). When
+`sinceLast.fallback` is set, note the fallback reason in the "Context used" footer.
+
 ### Step 3b — PR/issue context (PR mode only, skip if `--no-pr-context`)
 Run: `gh pr view <N> --json title,body` (these fields always exist). Do NOT
 request `closingIssues` — it is not a valid `gh pr view --json` field and makes
@@ -88,6 +94,8 @@ the whole call fail. Derive linked issues best-effort by scanning the body for
 `gh issue view <n> --json title,body`. Add PR title + body + linked issues
 under a `## PR/issue context` label. If `gh` fails or there is no body/issues,
 skip silently — never block the review. Note failures for the Context used footer.
+For each linked issue body, pipe it into `anchor issue-criteria` (stdin → JSON
+`{criteria:[…]}`) to get the testable acceptance criteria. Keep them for Step 7.
 
 ### Step 3c — CI failure context (PR mode only, skip if `--no-ci-context`)
 Run: `gh pr checks <N>`. If any check failed, get the failed log:
@@ -115,6 +123,13 @@ If `tools` is empty, note that no analyzers were available and rely on reasoning
   (`rules[]`) plus any `.anchor/rules.md` prose. A matching rule violation IS a
   finding at the rule's severity. Rules are project intent — weight them above
   generic best-practice.
+- **Prior findings (dedup).** Run `anchor review list` and read the newest entry's
+  `findings` array (`[{file, line, title}]`). Treat these as **prior findings**: drop a
+  candidate finding that is materially identical to a prior finding (same `file` and a
+  digit-blind title match) **when that location is NOT in the current diff** (i.e. the
+  code there is unchanged since the last review). A finding on a line the diff DID
+  touch is fair game — re-surface it. This is the primary dedup layer; the archive also
+  stores each finding's hash as the deterministic identity backstop.
 
 ### Step 4 — Get related files
 Run `anchor context --from-diff <target> --max-files 50`. Read each related
@@ -123,6 +138,12 @@ of changed files first). Files with `reason: "manifest"` are declared contracts
 (schema, OpenAPI, design docs from `.anchor/files.json`) that the change must
 conform to — read them and check the diff against them; their `description` says
 why they matter.
+
+Related files may carry `reason: "caller"` (a reverse-reference call site) or
+`reason: "sibling"` (a same-directory file). Both are **grep-approximate** — no
+semantic resolution, so they can't disambiguate same-named symbols across scopes.
+Treat them as leads to read, not proof, and note in the "Context used" footer that
+caller/sibling context is heuristic.
 
 ### Step 5 — Build the context block and track sources
 Assemble: diff + related files + project instructions + learnings + config
@@ -262,8 +283,38 @@ Use exactly this structure (severities with zero findings show "None."):
 ────────────────────────────────────────────────────────────────
 ```
 
+**Per-finding machine-readable block (`anchor:finding`).** Inside each finding's
+rendered block, emit ONE HTML comment carrying that finding's machine-readable
+record (invisible in markdown viewers, like `anchor:meta`). **Required for every
+CRITICAL/HIGH finding; optional for MEDIUM/LOW.** Exact shape:
+
+    <!-- anchor:finding {"n":N,"file":"<repo-rel>","line":L,"severity":"high","category":"logic","title":"<canonical short desc>","fix":{"edits":[{"file":"<repo-rel>","range":[start,end],"replacement":"<new text>"}],"verify":"<cmd|null>"}} -->
+
+- `title` is the canonical short description and the dedup identity — keep it stable
+  for the same defect across runs (a script hashes `file` + a digit-blinded `title`).
+- `fix.edits` is an array (a multi-spot fix is one spec). `range` is `[startLine,
+  endLine]` in **new-file** (post-change) coordinates — the same line numbers as the
+  `<line> | code` blocks above. `replacement` is the new text for that range. Avoid a
+  literal `-->` inside `replacement` or `title` — it truncates the HTML comment and the
+  block is silently skipped by the parser.
+- `fix.verify` is the discovered test/build command, or `null`. **Discover it once**:
+  `package.json` `scripts.test` or `scripts.build` (this repo: `vitest run tests/unit`)
+  → else `pytest` / `cargo test` / `go test ./...` / `make test` if those toolchains
+  are present → else `null` (and ask the user at fix-time).
+
+**"Can't spec it → noise" discipline.** Every CRITICAL/HIGH finding must carry EITHER
+a concrete `fix` spec OR, in its explanation, an explicit `no safe automatic fix:
+<reason>`. If you can produce neither a concrete fix nor a justification, the finding
+is too vague to stand — downgrade or drop it. (Vagueness becomes visible; precision wins.)
+
 Number findings sequentially across all severities (CRITICAL first) so
 "finding N" replies are unambiguous.
+
+**Acceptance criteria (PR mode with a linked issue).** If Step 3b produced criteria,
+render an **"Acceptance criteria"** subsection — one line per criterion with a
+three-state verdict: `✅ Addressed` / `❌ Not addressed` / `❓ Unclear`, each with a
+one-line justification (cite file/line evidence where addressed). **Abstain (`❓
+Unclear`) whenever the diff doesn't clearly settle it — never guess.**
 
 The first line is a machine-readable `anchor:meta` comment (invisible in most
 markdown viewers). Keep its `score`/`severities` consistent with the rendered
@@ -274,8 +325,14 @@ severity counts in the archive frontmatter.
 ### Step 8 — Handle follow-ups
 - `mark finding N as noise` → Bash: `anchor learn add "<a concise generalized pattern>" --reason "<why>" --scope "<glob from the finding's file, e.g. src/db/**>" --category "<the finding's category>"` (scope keeps the learning from silencing unrelated code; omit `--scope` only if the pattern is genuinely repo-wide)
 - `explain finding N` → explain in more depth using the context you already have
-- `fix finding N` → propose a patch via the normal Edit workflow (never auto-apply)
-- `fix all` → walk findings CRITICAL → LOW, proposing a patch for each in turn
+- `fix finding N` → never edit as a side-effect of review; an explicit `fix finding N`
+  applies the finding's `fix.edits` via the Edit tool (which surfaces the change for
+  approval), then auto-runs the `fix.verify` command, reports pass/fail, and **keeps
+  the diff even if verify fails** (a failing verify is information, not a rollback
+  trigger — tell the user and let them decide). If the finding has no `fix` spec, say
+  so and propose a patch the normal way.
+- `fix all` → walk findings CRITICAL → LOW, applying each finding's `fix.edits` in
+  turn, then run the discovered `verify` command ONCE at the end and report the result.
 - `generate docstrings` → add docstrings (per language convention) to changed functions/classes/exports
 - `generate tests` → write unit tests for the changed code paths in the project's existing test style
 - `simplify` → propose a refactor of the changed code (dead code, redundant conditionals, naming, duplication)

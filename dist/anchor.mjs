@@ -4441,6 +4441,18 @@ function runDoctor({ cwd = process.cwd() } = {}) {
 // lib/diff.mjs
 import { readFileSync as readFileSync2, existsSync as existsSync3 } from "node:fs";
 import { join as join3 } from "node:path";
+function sinceLastRange(repoDir, lastSha, { env } = {}) {
+  if (!lastSha) return { mode: "fallback", reason: "no prior review to diff since" };
+  const verify = runGit(["rev-parse", "--verify", "--quiet", `${lastSha}^{commit}`], { cwd: repoDir, env });
+  if (verify.code !== 0) {
+    return { mode: "fallback", reason: `prior review SHA ${lastSha} is unreachable (rebased or pruned?)` };
+  }
+  const anc = runGit(["merge-base", "--is-ancestor", lastSha, "HEAD"], { cwd: repoDir, env });
+  if (anc.code !== 0) {
+    return { mode: "fallback", reason: `prior review SHA ${lastSha} is not an ancestor of HEAD (rebased?)` };
+  }
+  return { mode: "range", range: `${lastSha}..HEAD` };
+}
 function parseTarget(tokens = []) {
   const t = tokens.filter((x) => !x.startsWith("--"));
   if (t.length === 0) return { mode: "uncommitted" };
@@ -4643,7 +4655,7 @@ function prMode(target, cwd, env) {
 }
 
 // lib/context.mjs
-import { readFileSync as readFileSync4, existsSync as existsSync5, statSync } from "node:fs";
+import { readFileSync as readFileSync4, existsSync as existsSync5, statSync, readdirSync } from "node:fs";
 import { join as join5, dirname, basename, extname, normalize as normalize2 } from "node:path";
 
 // lib/manifest.mjs
@@ -4665,10 +4677,66 @@ function loadManifest(repoDir) {
   return raw.filter((e) => e && typeof e.path === "string").map((e) => ({ path: e.path, description: typeof e.description === "string" ? e.description : "", scope: typeof e.scope === "string" ? e.scope : "**" }));
 }
 
+// lib/refs.mjs
+var CODE_GLOBS = ["*.ts", "*.tsx", "*.js", "*.jsx", "*.mjs", "*.py", "*.go", "*.rs", "*.java", "*.rb", "*.c", "*.cpp", "*.h"];
+function findRefs(repoDir, symbol, { globs = CODE_GLOBS } = {}) {
+  if (!symbol || !/^[A-Za-z_$][\w$]*$/.test(symbol)) throw new Error("anchor: refs needs a valid identifier");
+  const r = runGit(["grep", "-nwE", escapeRe(symbol), "--", ...globs], { cwd: repoDir });
+  const references = r.stdout.split("\n").filter(Boolean).map((l) => {
+    const m = /^(.+?):(\d+):(.*)$/.exec(l);
+    return m ? { file: m[1], line: Number(m[2]), text: m[3].trim() } : null;
+  }).filter(Boolean);
+  return { symbol, references, count: references.length };
+}
+
 // lib/context.mjs
 var IMPORT_RE = /(?:import\s[^'"]*['"]([^'"]+)['"]|from\s+['"]([^'"]+)['"]|require\(\s*['"]([^'"]+)['"]\s*\))/g;
 var RESOLVE_EXTS = ["", ".ts", ".tsx", ".js", ".jsx", ".mjs", "/index.ts", "/index.js", ".py"];
 var GREP_GLOBS = ["*.ts", "*.tsx", "*.js", "*.jsx", "*.mjs", "*.py"];
+var JS_EXTS = /* @__PURE__ */ new Set([".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"]);
+var SIBLING_EXTS = /* @__PURE__ */ new Set([".ts", ".tsx", ".js", ".jsx", ".mjs", ".py", ".go", ".rs", ".java", ".rb", ".c", ".cpp", ".h"]);
+var COMMON_NAMES = /* @__PURE__ */ new Set([
+  "get",
+  "set",
+  "run",
+  "init",
+  "main",
+  "index",
+  "default",
+  "handler",
+  "value",
+  "data",
+  "name",
+  "type",
+  "item",
+  "list",
+  "config",
+  "options",
+  "props",
+  "state",
+  "result",
+  "error",
+  "utils",
+  "util",
+  "helper",
+  "helpers",
+  "create",
+  "update",
+  "remove",
+  "delete",
+  "parse",
+  "format",
+  "render",
+  "setup",
+  "start",
+  "stop",
+  "load",
+  "save",
+  "read",
+  "write"
+]);
+var CALLER_FILE_CAP = 15;
+var SYMBOLS_PER_FILE = 8;
 function parseImports(src) {
   const specs = [];
   for (const m of src.matchAll(IMPORT_RE)) {
@@ -4691,10 +4759,56 @@ function resolveImport(repoDir, fromFile, spec) {
   }
   return null;
 }
+function parseExports(src, ext2) {
+  const names = /* @__PURE__ */ new Set();
+  const s = String(src);
+  if (JS_EXTS.has(ext2)) {
+    for (const m of s.matchAll(/export\s+(?:default\s+)?(?:async\s+)?function\s+([A-Za-z_$][\w$]*)/g)) names.add(m[1]);
+    for (const m of s.matchAll(/export\s+class\s+([A-Za-z_$][\w$]*)/g)) names.add(m[1]);
+    for (const m of s.matchAll(/export\s+(?:const|let|var)\s+([A-Za-z_$][\w$]*)/g)) names.add(m[1]);
+    for (const m of s.matchAll(/export\s*\{([^}]*)\}/g)) {
+      for (const part of m[1].split(",")) {
+        const seg = part.trim();
+        if (!seg) continue;
+        const asMatch = /\bas\s+([A-Za-z_$][\w$]*)\s*$/.exec(seg);
+        const name = asMatch ? asMatch[1] : /^([A-Za-z_$][\w$]*)/.exec(seg)?.[1];
+        if (name) names.add(name);
+      }
+    }
+  } else if (ext2 === ".py") {
+    for (const m of s.matchAll(/^def\s+([A-Za-z_]\w*)/gm)) names.add(m[1]);
+    for (const m of s.matchAll(/^class\s+([A-Za-z_]\w*)/gm)) names.add(m[1]);
+  }
+  return [...names];
+}
+function sharedPrefixLen(a, b) {
+  let i = 0;
+  while (i < a.length && i < b.length && a[i] === b[i]) i++;
+  return i;
+}
+function findSiblings(repoDir, filePath2, { max = 5, exclude = /* @__PURE__ */ new Set() } = {}) {
+  const dir = dirname(filePath2);
+  let entries;
+  try {
+    entries = readdirSync(join5(repoDir, dir), { withFileTypes: true });
+  } catch {
+    return [];
+  }
+  const stem = basename(filePath2, extname(filePath2));
+  const selfBase = basename(filePath2);
+  const cands = entries.filter((e) => e.isFile() && SIBLING_EXTS.has(extname(e.name)) && e.name !== selfBase).map((e) => dir === "." ? e.name : `${dir}/${e.name}`).filter((p) => !exclude.has(p));
+  cands.sort((a, b) => {
+    const da = sharedPrefixLen(stem, basename(a, extname(a)));
+    const db = sharedPrefixLen(stem, basename(b, extname(b)));
+    return db !== da ? db - da : a.localeCompare(b);
+  });
+  return cands.slice(0, max);
+}
 function getContext({ files, repoDir, maxFiles = 50, ignore = [] }) {
   const related = /* @__PURE__ */ new Map();
   const descriptions = /* @__PURE__ */ new Map();
   const changed = new Set(files);
+  const srcCache = /* @__PURE__ */ new Map();
   for (const f of files) {
     const stem = basename(f, extname(f));
     if (stem) {
@@ -4708,7 +4822,9 @@ function getContext({ files, repoDir, maxFiles = 50, ignore = [] }) {
     }
     const abs = join5(repoDir, f);
     if (existsSync5(abs)) {
-      for (const spec of parseImports(readFileSync4(abs, "utf8"))) {
+      const src = readFileSync4(abs, "utf8");
+      srcCache.set(f, src);
+      for (const spec of parseImports(src)) {
         const resolved = resolveImport(repoDir, f, spec);
         if (resolved && !changed.has(resolved) && !related.has(resolved)) {
           related.set(resolved, "importee");
@@ -4721,6 +4837,39 @@ function getContext({ files, repoDir, maxFiles = 50, ignore = [] }) {
     if (changed.has(p) || related.has(p) || !existsSync5(join5(repoDir, p))) continue;
     related.set(p, "manifest");
     if (entry.description) descriptions.set(p, entry.description);
+  }
+  const lookedUp = /* @__PURE__ */ new Set();
+  let callerFiles = 0;
+  for (const f of files) {
+    if (callerFiles >= CALLER_FILE_CAP) break;
+    const src = srcCache.get(f);
+    if (src === void 0) continue;
+    const symbols = parseExports(src, extname(f)).filter((s) => s.length >= 4 && !COMMON_NAMES.has(s.toLowerCase()) && !lookedUp.has(s)).slice(0, SYMBOLS_PER_FILE);
+    for (const sym of symbols) {
+      lookedUp.add(sym);
+      let refs;
+      try {
+        refs = findRefs(repoDir, sym).references;
+      } catch {
+        continue;
+      }
+      for (const ref of refs) {
+        if (callerFiles >= CALLER_FILE_CAP) break;
+        if (!changed.has(ref.file) && !related.has(ref.file)) {
+          related.set(ref.file, "caller");
+          callerFiles++;
+        }
+      }
+    }
+  }
+  const siblingExclude = /* @__PURE__ */ new Set([...changed, ...related.keys()]);
+  for (const f of files) {
+    for (const sib of findSiblings(repoDir, f, { max: 5, exclude: siblingExclude })) {
+      if (!related.has(sib)) {
+        related.set(sib, "sibling");
+        siblingExclude.add(sib);
+      }
+    }
   }
   const list = filterIgnored([...related.keys()], ignore).slice(0, maxFiles).map((path2) => {
     const reason = related.get(path2);
@@ -4970,21 +5119,10 @@ function gatherRules({ repoDir, configRules, changedPaths }) {
   return { prose: loadRulesProse(repoDir), rules: selectRules(configRules, changedPaths) };
 }
 
-// lib/refs.mjs
-var CODE_GLOBS = ["*.ts", "*.tsx", "*.js", "*.jsx", "*.mjs", "*.py", "*.go", "*.rs", "*.java", "*.rb", "*.c", "*.cpp", "*.h"];
-function findRefs(repoDir, symbol, { globs = CODE_GLOBS } = {}) {
-  if (!symbol || !/^[A-Za-z_$][\w$]*$/.test(symbol)) throw new Error("anchor: refs needs a valid identifier");
-  const r = runGit(["grep", "-nwE", escapeRe(symbol), "--", ...globs], { cwd: repoDir });
-  const references = r.stdout.split("\n").filter(Boolean).map((l) => {
-    const m = /^(.+?):(\d+):(.*)$/.exec(l);
-    return m ? { file: m[1], line: Number(m[2]), text: m[3].trim() } : null;
-  }).filter(Boolean);
-  return { symbol, references, count: references.length };
-}
-
 // lib/review.mjs
-import { readFileSync as readFileSync7, writeFileSync as writeFileSync2, mkdirSync as mkdirSync2, existsSync as existsSync9, readdirSync } from "node:fs";
+import { readFileSync as readFileSync7, writeFileSync as writeFileSync2, mkdirSync as mkdirSync2, existsSync as existsSync9, readdirSync as readdirSync2 } from "node:fs";
 import { join as join9, basename as basename2, dirname as dirname3 } from "node:path";
+import { createHash } from "node:crypto";
 
 // lib/frontmatter.mjs
 function parseFrontmatter(text) {
@@ -5042,28 +5180,70 @@ function extractReviewMeta(content) {
     severities: anyHeader ? { critical: found.critical ?? 0, high: found.high ?? 0, medium: found.medium ?? 0, low: found.low ?? 0 } : null
   };
 }
+function parseFindingBlocks(content) {
+  const out = [];
+  const re = /<!--\s*anchor:finding\s*(\{[\s\S]*?\})\s*-->/g;
+  for (const m of String(content).matchAll(re)) {
+    let obj;
+    try {
+      obj = JSON.parse(m[1]);
+    } catch {
+      continue;
+    }
+    if (!obj || typeof obj !== "object") continue;
+    if (typeof obj.file !== "string" || typeof obj.title !== "string") continue;
+    out.push(obj);
+  }
+  return out;
+}
+function normalizeTitle(s) {
+  return String(s).toLowerCase().replace(/\s+/g, " ").replace(/\d+/g, "#").trim();
+}
+function findingHash(file, title) {
+  return createHash("sha1").update(`${file}\0${normalizeTitle(title)}`).digest("hex");
+}
 function saveReview(repoDir, content, meta = {}) {
   const date = meta.date ?? (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
   const sha = meta.sha ?? shortHead(repoDir) ?? "nosha";
   const path2 = meta.path ?? join9(reviewsDir(repoDir), `${date}-${sha}.md`);
   mkdirSync2(dirname3(path2), { recursive: true });
   const extracted = extractReviewMeta(content);
+  const findings = parseFindingBlocks(content).map((f) => ({
+    file: f.file,
+    line: typeof f.line === "number" ? f.line : null,
+    title: f.title
+  }));
   const fm = {
     date,
     sha,
     target: meta.target ?? "",
     score: meta.score ?? extracted.score,
-    severities: meta.severities ?? extracted.severities ?? { critical: 0, high: 0, medium: 0, low: 0 }
+    severities: meta.severities ?? extracted.severities ?? { critical: 0, high: 0, medium: 0, low: 0 },
+    findings,
+    finding_hashes: findings.map((f) => findingHash(f.file, f.title))
   };
+  const prior = listReviews(repoDir).find((r) => r.file !== path2);
+  const priorHashes = new Set(prior?.finding_hashes ?? []);
+  const repeated = findings.filter((f) => priorHashes.has(findingHash(f.file, f.title)));
+  if (repeated.length) fm.repeated_finding_hashes = repeated.map((f) => findingHash(f.file, f.title));
   writeFileSync2(path2, stringifyFrontmatter(fm, content));
-  return { path: path2 };
+  return { path: path2, repeated: repeated.map((f) => ({ file: f.file, title: f.title })) };
 }
 function listReviews(repoDir) {
   const dir = reviewsDir(repoDir);
   if (!existsSync9(dir)) return [];
-  return readdirSync(dir).filter((f) => f.endsWith(".md")).map((file) => {
+  return readdirSync2(dir).filter((f) => f.endsWith(".md")).map((file) => {
     const { data } = parseFrontmatter(readFileSync7(join9(dir, file), "utf8"));
-    return { file: join9(dir, file), date: data.date ?? null, sha: data.sha ?? null, target: data.target ?? "", score: data.score ?? null, severities: data.severities ?? null };
+    return {
+      file: join9(dir, file),
+      date: data.date ?? null,
+      sha: data.sha ?? null,
+      target: data.target ?? "",
+      score: data.score ?? null,
+      severities: data.severities ?? null,
+      findings: Array.isArray(data.findings) ? data.findings : [],
+      finding_hashes: Array.isArray(data.finding_hashes) ? data.finding_hashes : []
+    };
   }).sort((a, b) => String(b.date ?? "").localeCompare(String(a.date ?? "")) || b.file.localeCompare(a.file));
 }
 function showReview(repoDir, sha) {
@@ -5417,8 +5597,37 @@ function uninstallHook(repoDir) {
   return { removed: true, path: hookPath };
 }
 
+// lib/issue.mjs
+var CHECKLIST_RE = /^\s*[-*]\s+\[[ xX]\]\s+(.+?)\s*$/;
+var HEADING_RE = /^\s{0,3}#{1,6}\s+(.+?)\s*#*\s*$/;
+var CRITERIA_HEADING_RE = /(acceptance\s+criteria|requirements)/i;
+var LIST_MARKER_RE = /^(?:[-*]\s+|\d+\.\s+)?(?:\[[ xX]\]\s+)?/;
+function extractAcceptanceCriteria(body) {
+  const lines = String(body ?? "").split("\n");
+  const checklist = [];
+  for (const l of lines) {
+    const m = CHECKLIST_RE.exec(l);
+    if (m) checklist.push(m[1].trim());
+  }
+  if (checklist.length) return checklist;
+  const out = [];
+  let capturing = false;
+  for (const l of lines) {
+    const h = HEADING_RE.exec(l);
+    if (h) {
+      capturing = CRITERIA_HEADING_RE.test(h[1]);
+      continue;
+    }
+    if (!capturing) continue;
+    const t = l.trim();
+    if (!t) continue;
+    out.push(t.replace(LIST_MARKER_RE, "").trim());
+  }
+  return out;
+}
+
 // lib/cli.mjs
-var USAGE = `usage: anchor <init|diff|context|analyze|rules|refs|review|learn|status|config|doctor|hook> [args] [--format json|text]`;
+var USAGE = `usage: anchor <init|diff|context|analyze|rules|refs|review|learn|status|config|doctor|hook|issue-criteria> [args] [--format json|text]`;
 var VALUED = /* @__PURE__ */ new Set(["format", "reason", "max-files", "from-diff", "depth", "target", "max-diff-lines", "scope", "category", "action"]);
 function parseArgs(argv) {
   const positional = [];
@@ -5494,7 +5703,21 @@ var HANDLERS = {
   diff(positional, flags) {
     requireRepo();
     const config = loadCfg();
-    const tokens = flags.has("staged") ? ["--staged", ...positional] : positional;
+    let tokens = flags.has("staged") ? ["--staged", ...positional] : positional;
+    let sinceLast;
+    if (flags.has("since-last")) {
+      const lastSha = listReviews(process.cwd())[0]?.sha;
+      const r = sinceLastRange(process.cwd(), lastSha);
+      if (r.mode === "range") {
+        tokens = [r.range];
+        sinceLast = { applied: true, range: r.range };
+      } else {
+        tokens = [];
+        sinceLast = { applied: false, fallback: r.reason };
+        process.stderr.write(`anchor: --since-last fell back to the full diff \u2014 ${r.reason}.
+`);
+      }
+    }
     const d = getDiff(tokens, { cwd: process.cwd() });
     const filtered = d.files.filter((f) => !isIgnored(f.path, config.ignore));
     const result = applyBudget(withStats({ ...d, files: filtered }), {
@@ -5504,6 +5727,7 @@ var HANDLERS = {
       fallbackLines: config.max_diff_lines,
       fallbackFiles: config.max_files
     });
+    if (sinceLast) result.sinceLast = sinceLast;
     if (result.budgetWarning) process.stderr.write(result.budgetWarning + "\n");
     emit(result, flags);
   },
@@ -5530,6 +5754,10 @@ var HANDLERS = {
     requireRepo();
     if (!positional[0]) throw new Error("anchor: refs needs a symbol, e.g. `anchor refs myFunction`");
     emit(findRefs(process.cwd(), positional[0]), flags);
+  },
+  "issue-criteria"(positional, flags) {
+    const body = readFileSync11(0, "utf8");
+    emit({ criteria: extractAcceptanceCriteria(body) }, flags);
   },
   learn(positional, flags) {
     requireRepo();

@@ -1,6 +1,6 @@
 import { describe, it, expect, afterAll } from 'vitest';
 import { readFileSync, existsSync } from 'node:fs';
-import { saveReview, listReviews, showReview, extractReviewMeta } from '../../lib/review.mjs';
+import { saveReview, listReviews, showReview, extractReviewMeta, parseFindingBlocks, normalizeTitle, findingHash, priorFindings } from '../../lib/review.mjs';
 import { makeFixtureRepo } from '../helpers/fixture.mjs';
 
 const repo = makeFixtureRepo({ 'a.txt': 'x\n' });
@@ -116,5 +116,120 @@ describe('extractReviewMeta', () => {
     const m = extractReviewMeta('just some notes, no format\n');
     expect(m.score).toBeNull();
     expect(m.severities).toBeNull();
+  });
+});
+
+describe('parseFindingBlocks', () => {
+  const block = (o) => `<!-- anchor:finding ${JSON.stringify(o)} -->`;
+
+  it('parses a single block with a nested fix spec', () => {
+    const content = `intro\n${block({
+      n: 1, file: 'src/a.ts', line: 10, severity: 'high', category: 'logic',
+      title: 'Off-by-one in slice', fix: { edits: [{ file: 'src/a.ts', range: [10, 10], replacement: 'xs[i]' }], verify: 'vitest run tests/unit' },
+    })}\nmore\n`;
+    const out = parseFindingBlocks(content);
+    expect(out).toHaveLength(1);
+    expect(out[0]).toMatchObject({ file: 'src/a.ts', title: 'Off-by-one in slice', severity: 'high' });
+    expect(out[0].fix.edits[0].range).toEqual([10, 10]);
+    expect(out[0].fix.verify).toBe('vitest run tests/unit');
+  });
+
+  it('parses multiple blocks in document order', () => {
+    const content = `${block({ n: 1, file: 'a.ts', title: 'First' })}\n${block({ n: 2, file: 'b.ts', title: 'Second' })}\n`;
+    expect(parseFindingBlocks(content).map((f) => f.title)).toEqual(['First', 'Second']);
+  });
+
+  it('skips a malformed-JSON block but keeps valid ones', () => {
+    const content = `<!-- anchor:finding {not json} -->\n${block({ file: 'b.ts', title: 'Valid' })}\n`;
+    expect(parseFindingBlocks(content).map((f) => f.title)).toEqual(['Valid']);
+  });
+
+  it('skips a block missing file or title (the dedup identity)', () => {
+    const content = `${block({ file: 'a.ts' })}\n${block({ title: 'no file' })}\n${block({ file: 'c.ts', title: 'ok' })}\n`;
+    expect(parseFindingBlocks(content).map((f) => f.title)).toEqual(['ok']);
+  });
+
+  it('returns [] when there are no blocks', () => {
+    expect(parseFindingBlocks('plain review, no machine block\n')).toEqual([]);
+  });
+});
+
+describe('finding dedup storage (4C)', () => {
+  const block = (o) => `<!-- anchor:finding ${JSON.stringify(o)} -->`;
+
+  it('normalizeTitle is lowercased, whitespace-collapsed, and digit-blind', () => {
+    expect(normalizeTitle('  Off-by-one  at   line 42 ')).toBe('off-by-one at line #');
+    expect(normalizeTitle('Drops write on row 7')).toBe('drops write on row #');           // canonical value
+    expect(normalizeTitle('Drops write on row 7')).toBe(normalizeTitle('Drops write on row 1234'));
+  });
+
+  it('findingHash is stable and digit-blind across line shifts', () => {
+    expect(findingHash('src/a.ts', 'Bug at line 10')).toBe(findingHash('src/a.ts', 'Bug at line 99'));
+    expect(findingHash('src/a.ts', 'Bug')).not.toBe(findingHash('src/b.ts', 'Bug'));
+    expect(findingHash('src/a.ts', 'X')).toMatch(/^[0-9a-f]{40}$/);
+  });
+
+  it('saveReview stores finding_hashes + findings parsed from the body', () => {
+    const fresh = makeFixtureRepo({ 'x.txt': 'x\n' });
+    try {
+      const body = `review\n${block({ n: 1, file: 'src/a.ts', line: 5, severity: 'high', title: 'Null deref on input' })}\n` +
+        `${block({ n: 2, file: 'src/b.ts', line: 9, severity: 'critical', title: 'SQL injection' })}\n`;
+      const { path } = saveReview(fresh.dir, body, { sha: 'dedup1', target: 'uncommitted' });
+      const text = readFileSync(path, 'utf8');
+      expect(text).toContain('finding_hashes:');
+      expect(text).toContain(findingHash('src/a.ts', 'Null deref on input'));
+      const [latest] = listReviews(fresh.dir);
+      expect(latest.findings).toEqual([
+        { file: 'src/a.ts', line: 5, title: 'Null deref on input' },
+        { file: 'src/b.ts', line: 9, title: 'SQL injection' },
+      ]);
+      expect(latest.finding_hashes).toHaveLength(2);
+    } finally { fresh.cleanup(); }
+  });
+
+  it('priorFindings returns the newest review findings, [] when none/freeform', () => {
+    const fresh = makeFixtureRepo({ 'x.txt': 'x\n' });
+    try {
+      expect(priorFindings(fresh.dir)).toEqual([]);
+      saveReview(fresh.dir, `r\n${block({ file: 'src/a.ts', line: 1, title: 'First finding' })}\n`, { sha: 'pf0001', date: '2026-06-10' });
+      saveReview(fresh.dir, 'freeform, no blocks\n', { sha: 'pf0002', date: '2026-06-12' });
+      // newest (2026-06-12) is freeform → no findings
+      expect(priorFindings(fresh.dir)).toEqual([]);
+    } finally { fresh.cleanup(); }
+  });
+
+  it('back-compat: a review without blocks stores empty findings', () => {
+    const fresh = makeFixtureRepo({ 'x.txt': 'x\n' });
+    try {
+      const { path } = saveReview(fresh.dir, 'plain body\n', { sha: 'bc0001' });
+      const text = readFileSync(path, 'utf8');
+      expect(text).toContain('findings: []');
+      expect(listReviews(fresh.dir).find((r) => r.sha === 'bc0001').findings).toEqual([]);
+    } finally { fresh.cleanup(); }
+  });
+
+  it('script-level net flags (never drops) a finding whose hash repeats the prior review', () => {
+    const fresh = makeFixtureRepo({ 'x.txt': 'x\n' });
+    try {
+      saveReview(fresh.dir, `r1\n${block({ file: 'src/a.ts', line: 5, title: 'Null deref on input' })}\n`, { sha: 'rep001', date: '2026-06-10' });
+      const r2 = saveReview(fresh.dir,
+        `r2\n${block({ file: 'src/a.ts', line: 8, title: 'Null deref on input' })}\n${block({ file: 'src/b.ts', line: 1, title: 'New issue' })}\n`,
+        { sha: 'rep002', date: '2026-06-11' });
+      // line 5 vs 8 → digit-blind identity matches the prior review; 'New issue' does not.
+      expect(r2.repeated.map((f) => f.title)).toEqual(['Null deref on input']);
+      const text = readFileSync(r2.path, 'utf8');
+      expect(text).toContain('repeated_finding_hashes:');
+      // non-destructive: both finding blocks remain in the saved body
+      expect(parseFindingBlocks(text)).toHaveLength(2);
+    } finally { fresh.cleanup(); }
+  });
+
+  it('first review (no prior) reports no repeats and adds no repeated_finding_hashes key', () => {
+    const fresh = makeFixtureRepo({ 'x.txt': 'x\n' });
+    try {
+      const r = saveReview(fresh.dir, `r\n${block({ file: 'src/a.ts', line: 1, title: 'Only finding' })}\n`, { sha: 'rep000' });
+      expect(r.repeated).toEqual([]);
+      expect(readFileSync(r.path, 'utf8')).not.toContain('repeated_finding_hashes');
+    } finally { fresh.cleanup(); }
   });
 });

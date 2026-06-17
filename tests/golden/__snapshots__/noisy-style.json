@@ -24,7 +24,24 @@
     }
   },
   "context": {
-    "files": []
+    "files": [
+      {
+        "path": "src/app.ts",
+        "reason": "sibling"
+      },
+      {
+        "path": "src/auth.ts",
+        "reason": "sibling"
+      },
+      {
+        "path": "src/find.ts",
+        "reason": "sibling"
+      },
+      {
+        "path": "src/sum.ts",
+        "reason": "sibling"
+      }
+    ]
   },
   "learnings": {
     "patterns": [

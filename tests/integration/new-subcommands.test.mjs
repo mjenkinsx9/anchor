@@ -87,3 +87,19 @@ describe('anchor learn list --from-diff (scoped)', () => {
     expect(out.patterns.map((p) => p.heading)).toEqual(['Global pattern']);
   });
 });
+
+describe('anchor issue-criteria', () => {
+  it('extracts checklist criteria from a body on stdin', () => {
+    const r = spawnSync('node', [BIN, 'issue-criteria'], {
+      cwd: repo.dir, encoding: 'utf8', input: '## Acceptance Criteria\n- [ ] do X\n- [x] do Y\n',
+    });
+    expect(r.status).toBe(0);
+    expect(JSON.parse(r.stdout)).toEqual({ criteria: ['do X', 'do Y'] });
+  });
+
+  it('emits an empty array for an unstructured body', () => {
+    const r = spawnSync('node', [BIN, 'issue-criteria'], { cwd: repo.dir, encoding: 'utf8', input: 'no structure here\n' });
+    expect(r.status).toBe(0);
+    expect(JSON.parse(r.stdout)).toEqual({ criteria: [] });
+  });
+});
