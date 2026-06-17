@@ -4655,7 +4655,7 @@ function prMode(target, cwd, env) {
 }
 
 // lib/context.mjs
-import { readFileSync as readFileSync4, existsSync as existsSync5, statSync } from "node:fs";
+import { readFileSync as readFileSync4, existsSync as existsSync5, statSync, readdirSync } from "node:fs";
 import { join as join5, dirname, basename, extname, normalize as normalize2 } from "node:path";
 
 // lib/manifest.mjs
@@ -4995,7 +4995,7 @@ function findRefs(repoDir, symbol, { globs = CODE_GLOBS } = {}) {
 }
 
 // lib/review.mjs
-import { readFileSync as readFileSync7, writeFileSync as writeFileSync2, mkdirSync as mkdirSync2, existsSync as existsSync9, readdirSync } from "node:fs";
+import { readFileSync as readFileSync7, writeFileSync as writeFileSync2, mkdirSync as mkdirSync2, existsSync as existsSync9, readdirSync as readdirSync2 } from "node:fs";
 import { join as join9, basename as basename2, dirname as dirname3 } from "node:path";
 import { createHash } from "node:crypto";
 
@@ -5107,7 +5107,7 @@ function saveReview(repoDir, content, meta = {}) {
 function listReviews(repoDir) {
   const dir = reviewsDir(repoDir);
   if (!existsSync9(dir)) return [];
-  return readdirSync(dir).filter((f) => f.endsWith(".md")).map((file) => {
+  return readdirSync2(dir).filter((f) => f.endsWith(".md")).map((file) => {
     const { data } = parseFrontmatter(readFileSync7(join9(dir, file), "utf8"));
     return {
       file: join9(dir, file),
