@@ -4441,6 +4441,18 @@ function runDoctor({ cwd = process.cwd() } = {}) {
 // lib/diff.mjs
 import { readFileSync as readFileSync2, existsSync as existsSync3 } from "node:fs";
 import { join as join3 } from "node:path";
+function sinceLastRange(repoDir, lastSha, { env } = {}) {
+  if (!lastSha) return { mode: "fallback", reason: "no prior review to diff since" };
+  const verify = runGit(["rev-parse", "--verify", "--quiet", `${lastSha}^{commit}`], { cwd: repoDir, env });
+  if (verify.code !== 0) {
+    return { mode: "fallback", reason: `prior review SHA ${lastSha} is unreachable (rebased or pruned?)` };
+  }
+  const anc = runGit(["merge-base", "--is-ancestor", lastSha, "HEAD"], { cwd: repoDir, env });
+  if (anc.code !== 0) {
+    return { mode: "fallback", reason: `prior review SHA ${lastSha} is not an ancestor of HEAD (rebased?)` };
+  }
+  return { mode: "range", range: `${lastSha}..HEAD` };
+}
 function parseTarget(tokens = []) {
   const t = tokens.filter((x) => !x.startsWith("--"));
   if (t.length === 0) return { mode: "uncommitted" };
@@ -5494,7 +5506,21 @@ var HANDLERS = {
   diff(positional, flags) {
     requireRepo();
     const config = loadCfg();
-    const tokens = flags.has("staged") ? ["--staged", ...positional] : positional;
+    let tokens = flags.has("staged") ? ["--staged", ...positional] : positional;
+    let sinceLast;
+    if (flags.has("since-last")) {
+      const lastSha = listReviews(process.cwd())[0]?.sha;
+      const r = sinceLastRange(process.cwd(), lastSha);
+      if (r.mode === "range") {
+        tokens = [r.range];
+        sinceLast = { applied: true, range: r.range };
+      } else {
+        tokens = [];
+        sinceLast = { applied: false, fallback: r.reason };
+        process.stderr.write(`anchor: --since-last fell back to the full diff \u2014 ${r.reason}.
+`);
+      }
+    }
     const d = getDiff(tokens, { cwd: process.cwd() });
     const filtered = d.files.filter((f) => !isIgnored(f.path, config.ignore));
     const result = applyBudget(withStats({ ...d, files: filtered }), {
@@ -5504,6 +5530,7 @@ var HANDLERS = {
       fallbackLines: config.max_diff_lines,
       fallbackFiles: config.max_files
     });
+    if (sinceLast) result.sinceLast = sinceLast;
     if (result.budgetWarning) process.stderr.write(result.budgetWarning + "\n");
     emit(result, flags);
   },
