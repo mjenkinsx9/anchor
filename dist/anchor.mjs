@@ -4997,6 +4997,7 @@ function findRefs(repoDir, symbol, { globs = CODE_GLOBS } = {}) {
 // lib/review.mjs
 import { readFileSync as readFileSync7, writeFileSync as writeFileSync2, mkdirSync as mkdirSync2, existsSync as existsSync9, readdirSync } from "node:fs";
 import { join as join9, basename as basename2, dirname as dirname3 } from "node:path";
+import { createHash } from "node:crypto";
 
 // lib/frontmatter.mjs
 function parseFrontmatter(text) {
@@ -5054,28 +5055,70 @@ function extractReviewMeta(content) {
     severities: anyHeader ? { critical: found.critical ?? 0, high: found.high ?? 0, medium: found.medium ?? 0, low: found.low ?? 0 } : null
   };
 }
+function parseFindingBlocks(content) {
+  const out = [];
+  const re = /<!--\s*anchor:finding\s*(\{[\s\S]*?\})\s*-->/g;
+  for (const m of String(content).matchAll(re)) {
+    let obj;
+    try {
+      obj = JSON.parse(m[1]);
+    } catch {
+      continue;
+    }
+    if (!obj || typeof obj !== "object") continue;
+    if (typeof obj.file !== "string" || typeof obj.title !== "string") continue;
+    out.push(obj);
+  }
+  return out;
+}
+function normalizeTitle(s) {
+  return String(s).toLowerCase().replace(/\s+/g, " ").replace(/\d+/g, "#").trim();
+}
+function findingHash(file, title) {
+  return createHash("sha1").update(`${file}\0${normalizeTitle(title)}`).digest("hex");
+}
 function saveReview(repoDir, content, meta = {}) {
   const date = meta.date ?? (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
   const sha = meta.sha ?? shortHead(repoDir) ?? "nosha";
   const path2 = meta.path ?? join9(reviewsDir(repoDir), `${date}-${sha}.md`);
   mkdirSync2(dirname3(path2), { recursive: true });
   const extracted = extractReviewMeta(content);
+  const findings = parseFindingBlocks(content).map((f) => ({
+    file: f.file,
+    line: typeof f.line === "number" ? f.line : null,
+    title: f.title
+  }));
   const fm = {
     date,
     sha,
     target: meta.target ?? "",
     score: meta.score ?? extracted.score,
-    severities: meta.severities ?? extracted.severities ?? { critical: 0, high: 0, medium: 0, low: 0 }
+    severities: meta.severities ?? extracted.severities ?? { critical: 0, high: 0, medium: 0, low: 0 },
+    findings,
+    finding_hashes: findings.map((f) => findingHash(f.file, f.title))
   };
+  const prior = listReviews(repoDir).find((r) => r.file !== path2);
+  const priorHashes = new Set(prior?.finding_hashes ?? []);
+  const repeated = findings.filter((f) => priorHashes.has(findingHash(f.file, f.title)));
+  if (repeated.length) fm.repeated_finding_hashes = repeated.map((f) => findingHash(f.file, f.title));
   writeFileSync2(path2, stringifyFrontmatter(fm, content));
-  return { path: path2 };
+  return { path: path2, repeated: repeated.map((f) => ({ file: f.file, title: f.title })) };
 }
 function listReviews(repoDir) {
   const dir = reviewsDir(repoDir);
   if (!existsSync9(dir)) return [];
   return readdirSync(dir).filter((f) => f.endsWith(".md")).map((file) => {
     const { data } = parseFrontmatter(readFileSync7(join9(dir, file), "utf8"));
-    return { file: join9(dir, file), date: data.date ?? null, sha: data.sha ?? null, target: data.target ?? "", score: data.score ?? null, severities: data.severities ?? null };
+    return {
+      file: join9(dir, file),
+      date: data.date ?? null,
+      sha: data.sha ?? null,
+      target: data.target ?? "",
+      score: data.score ?? null,
+      severities: data.severities ?? null,
+      findings: Array.isArray(data.findings) ? data.findings : [],
+      finding_hashes: Array.isArray(data.finding_hashes) ? data.finding_hashes : []
+    };
   }).sort((a, b) => String(b.date ?? "").localeCompare(String(a.date ?? "")) || b.file.localeCompare(a.file));
 }
 function showReview(repoDir, sha) {

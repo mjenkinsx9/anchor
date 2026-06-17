@@ -18,4 +18,9 @@ describe('SKILL.md Phase 4 contract', () => {
     expect(SKILL).toMatch(/applies the finding's `fix\.edits` via the Edit tool/);
     expect(SKILL).not.toContain('propose a patch via the normal Edit workflow (never auto-apply)');
   });
+  it('4C: documents --since-last and prior-findings suppression', () => {
+    expect(SKILL).toContain('--since-last');
+    expect(SKILL).toContain('prior findings');
+    expect(SKILL).toMatch(/NOT in the current diff/);
+  });
 });

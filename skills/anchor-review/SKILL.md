@@ -80,6 +80,12 @@ code before generated/lock/vendored files), and record in the "Context used"
 footer which files you prioritized and which you skipped. The user can re-run
 with `--max-diff-lines N` (raise the budget) or `--force` (silence the flag).
 
+**Incremental review (`--since-last`).** If the user asked for `--since-last`, run
+`anchor diff --since-last`. Its `sinceLast` field reports `{applied:true,range}` (the
+diff is only what changed since the last archived review) or `{applied:false,fallback}`
+(the recorded SHA was rebased/pruned — you got the full working diff instead). When
+`sinceLast.fallback` is set, note the fallback reason in the "Context used" footer.
+
 ### Step 3b — PR/issue context (PR mode only, skip if `--no-pr-context`)
 Run: `gh pr view <N> --json title,body` (these fields always exist). Do NOT
 request `closingIssues` — it is not a valid `gh pr view --json` field and makes
@@ -115,6 +121,13 @@ If `tools` is empty, note that no analyzers were available and rely on reasoning
   (`rules[]`) plus any `.anchor/rules.md` prose. A matching rule violation IS a
   finding at the rule's severity. Rules are project intent — weight them above
   generic best-practice.
+- **Prior findings (dedup).** Run `anchor review list` and read the newest entry's
+  `findings` array (`[{file, line, title}]`). Treat these as **prior findings**: drop a
+  candidate finding that is materially identical to a prior finding (same `file` and a
+  digit-blind title match) **when that location is NOT in the current diff** (i.e. the
+  code there is unchanged since the last review). A finding on a line the diff DID
+  touch is fair game — re-surface it. This is the primary dedup layer; the archive also
+  stores each finding's hash as the deterministic identity backstop.
 
 ### Step 4 — Get related files
 Run `anchor context --from-diff <target> --max-files 50`. Read each related
