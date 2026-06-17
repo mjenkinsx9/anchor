@@ -28,4 +28,10 @@ describe('SKILL.md Phase 4 contract', () => {
     expect(SKILL).toContain('reason: "sibling"');
     expect(SKILL).toContain('grep-approximate');
   });
+  it('4E: pipes issue bodies into issue-criteria and renders three-state verdicts', () => {
+    expect(SKILL).toContain('anchor issue-criteria');
+    expect(SKILL).toContain('Acceptance criteria');
+    expect(SKILL).toContain('✅ Addressed');
+    expect(SKILL).toContain('❓ Unclear');
+  });
 });

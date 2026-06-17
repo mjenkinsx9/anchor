@@ -94,6 +94,8 @@ the whole call fail. Derive linked issues best-effort by scanning the body for
 `gh issue view <n> --json title,body`. Add PR title + body + linked issues
 under a `## PR/issue context` label. If `gh` fails or there is no body/issues,
 skip silently — never block the review. Note failures for the Context used footer.
+For each linked issue body, pipe it into `anchor issue-criteria` (stdin → JSON
+`{criteria:[…]}`) to get the testable acceptance criteria. Keep them for Step 7.
 
 ### Step 3c — CI failure context (PR mode only, skip if `--no-ci-context`)
 Run: `gh pr checks <N>`. If any check failed, get the failed log:
@@ -307,6 +309,12 @@ is too vague to stand — downgrade or drop it. (Vagueness becomes visible; prec
 
 Number findings sequentially across all severities (CRITICAL first) so
 "finding N" replies are unambiguous.
+
+**Acceptance criteria (PR mode with a linked issue).** If Step 3b produced criteria,
+render an **"Acceptance criteria"** subsection — one line per criterion with a
+three-state verdict: `✅ Addressed` / `❌ Not addressed` / `❓ Unclear`, each with a
+one-line justification (cite file/line evidence where addressed). **Abstain (`❓
+Unclear`) whenever the diff doesn't clearly settle it — never guess.**
 
 The first line is a machine-readable `anchor:meta` comment (invisible in most
 markdown viewers). Keep its `score`/`severities` consistent with the rendered

@@ -5597,8 +5597,37 @@ function uninstallHook(repoDir) {
   return { removed: true, path: hookPath };
 }
 
+// lib/issue.mjs
+var CHECKLIST_RE = /^\s*[-*]\s+\[[ xX]\]\s+(.+?)\s*$/;
+var HEADING_RE = /^\s{0,3}#{1,6}\s+(.+?)\s*#*\s*$/;
+var CRITERIA_HEADING_RE = /(acceptance\s+criteria|requirements)/i;
+var LIST_MARKER_RE = /^(?:[-*]\s+|\d+\.\s+)?(?:\[[ xX]\]\s+)?/;
+function extractAcceptanceCriteria(body) {
+  const lines = String(body ?? "").split("\n");
+  const checklist = [];
+  for (const l of lines) {
+    const m = CHECKLIST_RE.exec(l);
+    if (m) checklist.push(m[1].trim());
+  }
+  if (checklist.length) return checklist;
+  const out = [];
+  let capturing = false;
+  for (const l of lines) {
+    const h = HEADING_RE.exec(l);
+    if (h) {
+      capturing = CRITERIA_HEADING_RE.test(h[1]);
+      continue;
+    }
+    if (!capturing) continue;
+    const t = l.trim();
+    if (!t) continue;
+    out.push(t.replace(LIST_MARKER_RE, "").trim());
+  }
+  return out;
+}
+
 // lib/cli.mjs
-var USAGE = `usage: anchor <init|diff|context|analyze|rules|refs|review|learn|status|config|doctor|hook> [args] [--format json|text]`;
+var USAGE = `usage: anchor <init|diff|context|analyze|rules|refs|review|learn|status|config|doctor|hook|issue-criteria> [args] [--format json|text]`;
 var VALUED = /* @__PURE__ */ new Set(["format", "reason", "max-files", "from-diff", "depth", "target", "max-diff-lines", "scope", "category", "action"]);
 function parseArgs(argv) {
   const positional = [];
@@ -5725,6 +5754,10 @@ var HANDLERS = {
     requireRepo();
     if (!positional[0]) throw new Error("anchor: refs needs a symbol, e.g. `anchor refs myFunction`");
     emit(findRefs(process.cwd(), positional[0]), flags);
+  },
+  "issue-criteria"(positional, flags) {
+    const body = readFileSync11(0, "utf8");
+    emit({ criteria: extractAcceptanceCriteria(body) }, flags);
   },
   learn(positional, flags) {
     requireRepo();
