@@ -21,7 +21,7 @@
     "eval:ci": "ANCHOR_EVAL_GENERATE=1 node tests/eval/run.mjs"
   },
   "dependencies": {
-    "js-yaml": "^4.1.0",
+    "js-yaml": "^4.3.0",
     "minimatch": "^10.0.0"
   },
   "devDependencies": {
